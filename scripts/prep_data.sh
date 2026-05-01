@@ -9,7 +9,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 UPSTREAM_DIR="${REPO_ROOT}/build-nanogpt"
 OUT_DIR="${REPO_ROOT}/data/fineweb-edu"
-PYTHON_BIN="${PYTHON_BIN:-${REPO_ROOT}/.venv/bin/python}"
+# PYTHON_BIN="${PYTHON_BIN:-${REPO_ROOT}/.venv/bin/python}"
+PYTHON_BIN="/home/zeus/miniconda3/envs/cloudspace/bin/python"
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="${FALLBACK_PYTHON_BIN:-python3.11}"

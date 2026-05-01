@@ -7,7 +7,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 cd "${REPO_ROOT}"
 
-if [[ ! -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+if [[ ! -x "${REPO_ROOT}/.venv/bin/python" ]] && [[ ! -x "/home/zeus/miniconda3/envs/cloudspace/bin/python" ]]; then
   echo "Expected ${REPO_ROOT}/.venv/bin/python. Create the virtualenv first." >&2
   exit 1
 fi
@@ -18,5 +18,9 @@ if [[ -z "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 shift
-
-"${REPO_ROOT}/.venv/bin/python" src/train.py --config "${CONFIG_PATH}" "$@"
+if [[ -x "/home/zeus/miniconda3/envs/cloudspace/bin/python" ]]; then
+  PYTHON_BIN="/home/zeus/miniconda3/envs/cloudspace/bin/python"
+else
+  PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+fi
+"${PYTHON_BIN}" src/train.py --config "${CONFIG_PATH}" "$@"
