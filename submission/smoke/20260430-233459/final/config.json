@@ -1,0 +1,56 @@
+{
+  "data": {
+    "data_fraction": "smoke",
+    "train_data_dir": "data/fineweb-edu",
+    "train_glob": "**/*.bin",
+    "val_data_path": "val.bin"
+  },
+  "model": {
+    "activation": "swiglu",
+    "bias": false,
+    "context_len": 1024,
+    "d_model": 256,
+    "dropout": 0.0,
+    "ffn_multiplier": 2.67,
+    "n_heads": 4,
+    "n_layer": 4,
+    "norm": "rmsnorm",
+    "pos_encoding": "rope",
+    "rope_base": 10000.0,
+    "vocab_size": 50257,
+    "weight_tying": true
+  },
+  "name": "baseline-smoke",
+  "optimizer": {
+    "adamw_lr": 0.0003,
+    "betas": [
+      0.9,
+      0.95
+    ],
+    "eps": 1e-08,
+    "momentum": 0.95,
+    "muon_lr": 0.02,
+    "muon_ns_steps": 5,
+    "name": "adamw",
+    "nesterov": true,
+    "weight_decay": 0.1
+  },
+  "train": {
+    "batch_size": 1,
+    "checkpoint_dir": "checkpoints/smoke",
+    "compile": false,
+    "device": "cuda",
+    "eval_batch_size": 1,
+    "eval_batches": 1,
+    "eval_interval": 1,
+    "grad_accum_steps": 1,
+    "grad_clip": 1.0,
+    "log_interval": 1,
+    "max_steps": 2,
+    "min_lr_ratio": 0.1,
+    "save_interval": 1,
+    "seed": 1337,
+    "submission_dir": "submission/smoke",
+    "warmup_steps": 5
+  }
+}

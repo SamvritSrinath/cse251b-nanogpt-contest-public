@@ -204,9 +204,30 @@ cython_debug/
 # Project artifacts
 .venv/
 data/
-checkpoints/
-submission/
 build-nanogpt/
+
+# Training outputs (large binaries)
+checkpoints/
+**/checkpoints/
+**/*.pt
+**/*.pth
+
+# Keep run metadata while ignoring heavyweight submission bundles.
+submission/**
+!submission/**/
+!submission/**/best/
+!submission/**/final/
+!submission/**/best/config.json
+!submission/**/final/config.json
+!submission/**/best/model.py
+!submission/**/final/model.py
+!submission/**/best/src/**
+!submission/**/final/src/**
+
+# Study outputs (ignore generated binary state, keep summaries/configs)
+experiments/studies/**/checkpoints/
+experiments/studies/**/submission/**
+experiments/studies/**/optuna_study.db
 
 # Marimo
 marimo/_static/
