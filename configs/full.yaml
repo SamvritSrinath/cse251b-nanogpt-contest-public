@@ -1,0 +1,52 @@
+name: full
+
+model:
+  # 16 x 768 exceeds the 100M contest cap for dense MHA + SwiGLU.
+  # This keeps the requested depth while moving to an under-budget width.
+  n_layer: 16
+  d_model: 576
+  n_heads: 12
+  ffn_multiplier: 2.67
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  pos_encoding: rope
+  norm: rmsnorm
+  activation: swiglu
+  dropout: 0.0
+  bias: false
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.0003
+  muon_lr: 0.02
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  train_data_dir: data/fineweb-edu
+  train_glob: "**/*.bin"
+  val_data_path: val.bin
+  data_fraction: 100%
+
+train:
+  max_steps: 10000
+  batch_size: 8
+  grad_accum_steps: 8
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 500
+  save_interval: 500
+  eval_batch_size: 8
+  eval_batches: 64
+  seed: 1337
+  device: cuda
+  compile: false
+  warmup_steps: 100
+  min_lr_ratio: 0.1
+  checkpoint_dir: checkpoints
+  submission_dir: submission
