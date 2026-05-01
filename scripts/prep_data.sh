@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Download and tokenize FineWeb-Edu shards using Karpathy's helper repo.
+# Download and tokenize FineWeb-Edu shards using Karpathy's build-nanogpt flow.
+# The default source is HuggingFaceFW/fineweb-edu, which build-nanogpt fetches
+# and tokenizes into GPT-2-compatible .bin shards for this repository.
 # Usage: ./scripts/prep_data.sh
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
@@ -27,4 +29,5 @@ find "${UPSTREAM_DIR}" -type f -name "*.bin" -print0 | while IFS= read -r -d '' 
   cp "${shard}" "${OUT_DIR}/"
 done
 
-echo "Copied token shards to ${OUT_DIR}"
+echo "Copied FineWeb-Edu token shards to ${OUT_DIR}"
+echo "Optional secondary corpora can live in sibling directories such as data/openwebtext/."

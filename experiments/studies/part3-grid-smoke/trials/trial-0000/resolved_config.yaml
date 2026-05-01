@@ -1,0 +1,63 @@
+name: part3-grid-smoke-trial-0000
+architecture:
+  name: modern_decoder
+  n_layer: 2
+  d_model: 128
+  n_heads: 4
+  ffn_multiplier: 2.67
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+optimizer:
+  name: adamw
+  adamw_lr: 0.0003
+  muon_lr: 0.02
+  weight_decay: 0.1
+  betas:
+  - 0.9
+  - 0.95
+  eps: 1.0e-08
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+data:
+  sources:
+  - name: fineweb_edu
+    path: data/fineweb-edu
+    glob: train_smoke*.bin
+    weight: 0.9
+    notes: ''
+  - name: general_web
+    path: data/general-web-smoke
+    glob: '*.bin'
+    weight: 0.1
+    notes: ''
+  val_data_path: /private/tmp/cse251b-part3-eval.bin
+  data_fraction: smoke
+  manifest_dir: data/manifests
+train:
+  max_steps: 2
+  batch_size: 1
+  grad_accum_steps: 1
+  grad_clip: 1.0
+  log_interval: 1
+  eval_interval: 1
+  save_interval: 1
+  eval_batch_size: 1
+  eval_batches: 1
+  seed: 1337
+  device: cpu
+  compile: false
+  warmup_steps: 1
+  min_lr_ratio: 0.1
+  checkpoint_dir: experiments/studies/part3-grid-smoke/trials/trial-0000/checkpoints
+  submission_dir: experiments/studies/part3-grid-smoke/trials/trial-0000/submission
+  context_schedule:
+    name: ramp
+    start_context_len: 256
+    end_context_len: 1024
+    switch_step: 1
+    ramp_steps: 1

@@ -1,114 +1,218 @@
-"""Data loading utilities for tokenized NanoGPT-style binary shards.
+"""Mixture-aware data loading and manifest caching for tokenized shard corpora.
 
-The training loader uses lazy ``numpy.memmap`` reads so the project can scale to
-many shards without pulling the entire dataset into RAM. Validation iteration is
-kept deliberately aligned with ``evaluate.py``: non-overlapping windows of
-``context_len`` tokens, shifted by one token for the targets.
+References:
+    - FineWeb and FineWeb-Edu dataset cards from Hugging Face document the
+      public source data and curation process used as the default corpus here.
+    - Karpathy's build-nanogpt project provides the GPT-2-tokenized shard format
+      this repository expects under ``data/fineweb-edu``.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterator
 
 import numpy as np
 import torch
 
-from src.utils import DataConfig
+from src.utils import DataConfig, DataSourceConfig, absolutize_from_cwd, ensure_directory, load_experiment_config
 
 
-def discover_training_shards(data_config: DataConfig) -> list[Path]:
-    """Find train shards while explicitly excluding the validation split.
+@dataclass(slots=True)
+class ShardInfo:
+    """Metadata for one token shard."""
 
-    Args:
-        data_config: Data settings describing the shard directory and glob.
+    path: str
+    num_tokens: int
 
-    Returns:
-        Sorted list of training shard paths.
 
-    Raises:
-        FileNotFoundError: If no training shards match the requested pattern.
-    """
+@dataclass(slots=True)
+class SourceManifest:
+    """Cached shard manifest for one weighted source."""
 
-    train_dir = Path(data_config.train_data_dir).expanduser().resolve()
-    val_path = Path(data_config.val_data_path).expanduser().resolve()
+    source_name: str
+    source_path: str
+    glob: str
+    weight: float
+    notes: str
+    shards: list[ShardInfo]
+
+
+def manifest_cache_key(source: DataSourceConfig) -> str:
+    """Create a stable cache key for a source manifest."""
+
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "name": source.name,
+                "path": str(absolutize_from_cwd(source.path)),
+                "glob": source.glob,
+                "weight": source.weight,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:10]
+    return f"{source.name}-{digest}.json"
+
+
+def count_tokens_in_shard(path: Path) -> int:
+    """Count tokens in a GPT-2-tokenized uint16 shard without loading it into RAM."""
+
+    return path.stat().st_size // np.dtype(np.uint16).itemsize
+
+
+def discover_source_shards(source: DataSourceConfig, *, val_path: Path) -> list[ShardInfo]:
+    """Discover shard metadata for one source while excluding ``val.bin``."""
+
+    source_root = absolutize_from_cwd(source.path)
     shard_paths = [
         shard
-        for shard in sorted(train_dir.glob(data_config.train_glob))
-        if shard.resolve() != val_path and shard.name != "val.bin"
+        for shard in sorted(source_root.glob(source.glob))
+        if shard.is_file() and shard.resolve() != val_path and shard.name != "val.bin"
     ]
     if not shard_paths:
         raise FileNotFoundError(
-            f"No training shards found in {train_dir} matching {data_config.train_glob}."
+            f"No training shards found for source '{source.name}' in {source_root} "
+            f"matching glob {source.glob}."
         )
-    return shard_paths
+    return [ShardInfo(path=str(path.resolve()), num_tokens=count_tokens_in_shard(path)) for path in shard_paths]
 
 
-class ShardedTokenLoader:
-    """Random-window batch sampler over a set of token shards."""
+def build_or_load_manifest(
+    source: DataSourceConfig,
+    *,
+    manifest_dir: str | Path,
+    val_path: Path,
+) -> SourceManifest:
+    """Load a cached manifest or build it by scanning the source directory."""
+
+    manifest_dir = ensure_directory(manifest_dir)
+    manifest_path = manifest_dir / manifest_cache_key(source)
+    if manifest_path.exists():
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return SourceManifest(
+            source_name=str(payload["source_name"]),
+            source_path=str(payload["source_path"]),
+            glob=str(payload["glob"]),
+            weight=float(payload["weight"]),
+            notes=str(payload.get("notes", "")),
+            shards=[ShardInfo(**shard) for shard in payload["shards"]],
+        )
+
+    manifest = SourceManifest(
+        source_name=source.name,
+        source_path=str(absolutize_from_cwd(source.path)),
+        glob=source.glob,
+        weight=source.weight,
+        notes=source.notes,
+        shards=discover_source_shards(source, val_path=val_path),
+    )
+    manifest_path.write_text(json.dumps(asdict(manifest), indent=2, sort_keys=True), encoding="utf-8")
+    return manifest
+
+
+def load_source_manifests(data_config: DataConfig) -> list[SourceManifest]:
+    """Load manifests for every configured source in the mixture."""
+
+    val_path = absolutize_from_cwd(data_config.val_data_path)
+    return [
+        build_or_load_manifest(
+            source,
+            manifest_dir=absolutize_from_cwd(data_config.manifest_dir),
+            val_path=val_path,
+        )
+        for source in data_config.sources
+    ]
+
+
+def summarize_manifests(manifests: list[SourceManifest]) -> str:
+    """Build a short human-readable summary for logging and docs."""
+
+    parts = []
+    for manifest in manifests:
+        token_count = sum(shard.num_tokens for shard in manifest.shards)
+        parts.append(
+            f"{manifest.source_name} weight={manifest.weight:g} shards={len(manifest.shards)} "
+            f"tokens={token_count:,}"
+        )
+    return "; ".join(parts)
+
+
+class WeightedShardSampler:
+    """Random-window batch sampler over a weighted mixture of shard sources."""
 
     def __init__(
         self,
-        shard_paths: list[Path],
+        manifests: list[SourceManifest],
         *,
-        context_len: int,
         batch_size: int,
         seed: int,
     ) -> None:
-        self.context_len = context_len
+        if not manifests:
+            raise ValueError("Expected at least one source manifest.")
         self.batch_size = batch_size
         self._rng = np.random.default_rng(seed)
-        self._epoch_rng = np.random.default_rng(seed + 1)
-        self._ordered_paths = list(shard_paths)
-        self._current_index = -1
-        self._current_tokens: np.memmap | None = None
-        self._batches_seen_in_shard = 0
-        self._batches_per_shard = 1
-        self._shuffle_for_new_epoch()
-        self._advance_shard()
+        self._source_weights = np.asarray([manifest.weight for manifest in manifests], dtype=np.float64)
+        self._source_weights = self._source_weights / self._source_weights.sum()
+        self._sources = [
+            {
+                "manifest": manifest,
+                # Sampling shards proportional to token count avoids oversampling tiny files.
+                "shard_probs": self._normalize_lengths([shard.num_tokens for shard in manifest.shards]),
+            }
+            for manifest in manifests
+        ]
+        self._memmaps: dict[str, np.memmap] = {}
 
-    def _shuffle_for_new_epoch(self) -> None:
-        """Shuffle shard order for the next pass through the dataset."""
+    @staticmethod
+    def _normalize_lengths(lengths: list[int]) -> np.ndarray:
+        """Normalize positive lengths into probabilities."""
 
-        permutation = self._epoch_rng.permutation(len(self._ordered_paths))
-        self._ordered_paths = [self._ordered_paths[index] for index in permutation]
+        values = np.asarray(lengths, dtype=np.float64)
+        if values.sum() <= 0:
+            raise ValueError("Shard lengths must sum to a positive value.")
+        return values / values.sum()
 
-    def _advance_shard(self) -> None:
-        """Open the next shard lazily via memmap."""
+    def _get_tokens(self, shard_path: str) -> np.memmap:
+        """Reuse memmaps so repeated batches do not reopen the same shard."""
 
-        self._current_index += 1
-        if self._current_index >= len(self._ordered_paths):
-            self._current_index = 0
-            self._shuffle_for_new_epoch()
-        shard_path = self._ordered_paths[self._current_index]
-        tokens = np.memmap(shard_path, dtype=np.uint16, mode="r")
-        if len(tokens) <= self.context_len:
+        if shard_path not in self._memmaps:
+            self._memmaps[shard_path] = np.memmap(shard_path, dtype=np.uint16, mode="r")
+        return self._memmaps[shard_path]
+
+    def _sample_source(self) -> dict[str, object]:
+        """Sample one source according to the configured mixture weights."""
+
+        source_index = int(self._rng.choice(len(self._sources), p=self._source_weights))
+        return self._sources[source_index]
+
+    def next_batch(self, device: str, *, context_len: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sample a random training batch from the weighted source mixture."""
+
+        source_record = self._sample_source()
+        manifest = source_record["manifest"]
+        shard_probs = source_record["shard_probs"]
+        assert isinstance(manifest, SourceManifest)
+        assert isinstance(shard_probs, np.ndarray)
+
+        shard_index = int(self._rng.choice(len(manifest.shards), p=shard_probs))
+        shard = manifest.shards[shard_index]
+        tokens = self._get_tokens(shard.path)
+        if len(tokens) <= context_len:
             raise ValueError(
-                f"Shard {shard_path} is too short for context length {self.context_len}."
+                f"Shard {shard.path} is too short for context length {context_len}."
             )
-        self._current_tokens = tokens
-        approx_batches = len(tokens) // max(1, self.batch_size * self.context_len)
-        self._batches_per_shard = max(1, approx_batches)
-        self._batches_seen_in_shard = 0
 
-    def next_batch(self, device: str) -> tuple[torch.Tensor, torch.Tensor]:
-        """Sample a random batch of overlapping training windows."""
-
-        if self._current_tokens is None:
-            self._advance_shard()
-        if self._batches_seen_in_shard >= self._batches_per_shard:
-            self._advance_shard()
-        assert self._current_tokens is not None
-
-        max_start = len(self._current_tokens) - self.context_len - 1
+        max_start = len(tokens) - context_len - 1
         starts = self._rng.integers(0, max_start + 1, size=self.batch_size, endpoint=False)
-        inputs = np.stack(
-            [self._current_tokens[start : start + self.context_len] for start in starts]
-        ).astype(np.int64)
+        inputs = np.stack([tokens[start : start + context_len] for start in starts]).astype(np.int64)
         targets = np.stack(
-            [self._current_tokens[start + 1 : start + self.context_len + 1] for start in starts]
+            [tokens[start + 1 : start + context_len + 1] for start in starts]
         ).astype(np.int64)
-        self._batches_seen_in_shard += 1
         return torch.from_numpy(inputs).to(device), torch.from_numpy(targets).to(device)
 
 
@@ -122,7 +226,7 @@ def iter_validation_batches(
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """Yield validation batches aligned with ``evaluate.py`` semantics."""
 
-    data = np.memmap(Path(data_path).expanduser().resolve(), dtype=np.uint16, mode="r")
+    data = np.memmap(absolutize_from_cwd(data_path), dtype=np.uint16, mode="r")
     n_chunks = (len(data) - 1) // context_len
     n_chunks = (n_chunks // batch_size) * batch_size
     yielded_batches = 0
@@ -144,3 +248,29 @@ def iter_validation_batches(
         ).astype(np.int64)
         yielded_batches += 1
         yield torch.from_numpy(inputs).to(device), torch.from_numpy(targets).to(device)
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for manifest creation."""
+
+    parser = argparse.ArgumentParser(description="Build or inspect data manifests.")
+    parser.add_argument("--config", type=str, required=True, help="Experiment config path.")
+    parser.add_argument(
+        "--print-only",
+        action="store_true",
+        help="Print the manifest summary after building/loading cached manifests.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Build manifests for the configured data sources and print a summary."""
+
+    args = parse_args()
+    config = load_experiment_config(args.config)
+    manifests = load_source_manifests(config.data)
+    print(summarize_manifests(manifests))
+
+
+if __name__ == "__main__":
+    main()

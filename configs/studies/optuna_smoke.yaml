@@ -1,0 +1,72 @@
+name: optuna_smoke
+mode: optuna
+base_config: configs/baseline.yaml
+output_dir: experiments/studies
+objective:
+  metric: val_ppl
+  direction: minimize
+pruner:
+  name: median
+  n_startup_trials: 1
+  n_warmup_steps: 1
+  interval_steps: 1
+parallelism: 1
+resume: true
+max_trials: 3
+search_space:
+  - path: optimizer.name
+    type: categorical
+    values: [adamw, muon_hybrid]
+  - path: architecture.name
+    type: categorical
+    values: [modern_decoder, gpt2_decoder]
+  - path: architecture.ffn_multiplier
+    type: categorical
+    values: [2.67]
+    conditions:
+      architecture.name: [modern_decoder]
+  - path: architecture.ffn_multiplier
+    type: categorical
+    values: [4.0]
+    conditions:
+      architecture.name: [gpt2_decoder]
+  - path: architecture.d_model
+    type: int
+    low: 192
+    high: 320
+    step: 64
+  - path: architecture.n_layer
+    type: int
+    low: 4
+    high: 6
+    step: 2
+  - path: train.grad_accum_steps
+    type: categorical
+    values: [1, 2]
+  - path: train.context_schedule.name
+    type: categorical
+    values: [fixed, ramp]
+  - path: train.context_schedule.start_context_len
+    type: categorical
+    values: [256]
+    conditions:
+      train.context_schedule.name: [ramp]
+  - path: train.context_schedule.end_context_len
+    type: categorical
+    values: [1024]
+    conditions:
+      train.context_schedule.name: [ramp]
+  - path: train.context_schedule.switch_step
+    type: int
+    low: 5
+    high: 15
+    step: 5
+    conditions:
+      train.context_schedule.name: [ramp]
+  - path: train.context_schedule.ramp_steps
+    type: int
+    low: 5
+    high: 10
+    step: 5
+    conditions:
+      train.context_schedule.name: [ramp]

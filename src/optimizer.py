@@ -1,17 +1,17 @@
-"""Optimizer construction for AdamW and Muon/AdamW hybrid training.
+"""Optimizer registry for AdamW and Muon/AdamW hybrid training.
 
 References:
     - The Muon split between hidden-layer matrices and everything else follows
       the modded-nanogpt training recipes published by Keller Jordan and
       collaborators.
     - The Newton-Schulz orthogonalization update is adapted from the public
-      Muon writeup and reference implementation lineage.
+      Muon reference implementation lineage.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -25,12 +25,7 @@ def zeroth_power_via_newton_schulz5(
     steps: int = 5,
     eps: float = 1e-7,
 ) -> torch.Tensor:
-    """Approximate the zeroth matrix power used by Muon.
-
-    This iteration mirrors the public Muon reference: normalize the gradient,
-    run a small fixed number of Newton-Schulz steps, and project back to the
-    original shape.
-    """
+    """Approximate the zeroth matrix power used by Muon."""
 
     if grad_matrix.ndim != 2:
         raise ValueError("Muon expects a rank-2 gradient matrix.")
@@ -173,6 +168,8 @@ def _split_hybrid_parameters(
             "token_embedding" in lowered or "lm_head" in lowered or "embed" in lowered
         )
         if parameter.ndim >= 2 and not is_embedding_or_head:
+            # Muon is reserved for hidden-layer matrices; embeddings and the output
+            # head stay on AdamW because that split is what the speedrun recipes use.
             muon_params.append(parameter)
         elif parameter.ndim >= 2:
             adamw_decay_params.append(parameter)
@@ -199,27 +196,29 @@ def _split_adamw_parameters(
     return decay_params, no_decay_params
 
 
-def build_optimizer(
+def build_adamw(
     model: torch.nn.Module,
     config: OptimizerConfig,
-) -> torch.optim.Optimizer | HybridOptimizer:
-    """Build the configured optimizer."""
+) -> torch.optim.AdamW:
+    """Build a plain AdamW optimizer."""
 
-    optimizer_name = config.name.lower()
-    if optimizer_name == "adamw":
-        decay_params, no_decay_params = _split_adamw_parameters(model)
-        return torch.optim.AdamW(
-            [
-                {"params": decay_params, "weight_decay": config.weight_decay},
-                {"params": no_decay_params, "weight_decay": 0.0},
-            ],
-            lr=config.adamw_lr,
-            betas=config.betas,
-            eps=config.eps,
-        )
+    decay_params, no_decay_params = _split_adamw_parameters(model)
+    return torch.optim.AdamW(
+        [
+            {"params": decay_params, "weight_decay": config.weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ],
+        lr=config.adamw_lr,
+        betas=config.betas,
+        eps=config.eps,
+    )
 
-    if optimizer_name != "muon_hybrid":
-        raise ValueError(f"Unsupported optimizer: {config.name}")
+
+def build_muon_hybrid(
+    model: torch.nn.Module,
+    config: OptimizerConfig,
+) -> HybridOptimizer:
+    """Build the Muon + AdamW hybrid optimizer."""
 
     muon_params, adamw_decay_params, adamw_no_decay_params = _split_hybrid_parameters(model)
     muon = Muon(
@@ -241,3 +240,23 @@ def build_optimizer(
         eps=config.eps,
     )
     return HybridOptimizer(muon=muon, adamw=adamw)
+
+
+OPTIMIZER_REGISTRY: dict[str, Callable[[torch.nn.Module, OptimizerConfig], Any]] = {
+    "adamw": build_adamw,
+    "muon_hybrid": build_muon_hybrid,
+}
+
+
+def build_optimizer(
+    model: torch.nn.Module,
+    config: OptimizerConfig,
+) -> torch.optim.Optimizer | HybridOptimizer:
+    """Build the configured optimizer through the registry."""
+
+    try:
+        builder = OPTIMIZER_REGISTRY[config.name.lower()]
+    except KeyError as exc:
+        supported = ", ".join(sorted(OPTIMIZER_REGISTRY))
+        raise ValueError(f"Unsupported optimizer: {config.name}. Supported: {supported}") from exc
+    return builder(model, config)
