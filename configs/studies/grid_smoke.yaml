@@ -1,0 +1,49 @@
+name: grid_smoke
+mode: grid
+base_config: configs/baseline.yaml
+output_dir: experiments/studies
+objective:
+  metric: val_ppl
+  direction: minimize
+parallelism: 1
+resume: true
+search_space:
+  - path: optimizer.name
+    type: categorical
+    values: [adamw, muon_hybrid]
+  - path: architecture.name
+    type: categorical
+    values: [modern_decoder, gpt2_decoder]
+  - path: architecture.ffn_multiplier
+    type: categorical
+    values: [2.67]
+    conditions:
+      architecture.name: [modern_decoder]
+  - path: architecture.ffn_multiplier
+    type: categorical
+    values: [4.0]
+    conditions:
+      architecture.name: [gpt2_decoder]
+  - path: train.context_schedule.name
+    type: categorical
+    values: [fixed, ramp]
+  - path: train.context_schedule.start_context_len
+    type: categorical
+    values: [256]
+    conditions:
+      train.context_schedule.name: [ramp]
+  - path: train.context_schedule.end_context_len
+    type: categorical
+    values: [1024]
+    conditions:
+      train.context_schedule.name: [ramp]
+  - path: train.context_schedule.switch_step
+    type: categorical
+    values: [10]
+    conditions:
+      train.context_schedule.name: [ramp]
+  - path: train.context_schedule.ramp_steps
+    type: categorical
+    values: [10]
+    conditions:
+      train.context_schedule.name: [ramp]

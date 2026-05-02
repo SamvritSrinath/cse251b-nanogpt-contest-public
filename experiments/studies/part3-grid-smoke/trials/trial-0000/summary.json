@@ -1,0 +1,22 @@
+{
+  "architecture_name": "modern_decoder",
+  "best_submission_dir": "experiments/studies/part3-grid-smoke/trials/trial-0000/submission/20260501-001555/best",
+  "best_val_loss": 10.841313362121582,
+  "best_val_ppl": 51088.43155069134,
+  "checkpoint_dir": "experiments/studies/part3-grid-smoke/trials/trial-0000/checkpoints/20260501-001555",
+  "config_hash": "5d4987cd59",
+  "config_name": "part3-grid-smoke-trial-0000",
+  "context_schedule": "ramp:256->1024@1+1",
+  "data_mixture": "fineweb_edu:0.9,general_web:0.1",
+  "effective_batch_tokens": 1024,
+  "final_submission_dir": "experiments/studies/part3-grid-smoke/trials/trial-0000/submission/20260501-001555/final",
+  "notes": "study=part3-grid-smoke trial=trial-0000",
+  "optimizer_name": "adamw",
+  "parameter_count": 6827264,
+  "run_id": "20260501-001555",
+  "status": "completed",
+  "steps_completed": 2,
+  "study_name": "part3-grid-smoke",
+  "trial_id": "trial-0000",
+  "trial_index": 0
+}

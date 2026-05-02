@@ -1,0 +1,76 @@
+{
+  "architecture": {
+    "bias": null,
+    "context_len": 1024,
+    "d_model": 128,
+    "dropout": 0.0,
+    "ffn_multiplier": 2.67,
+    "n_heads": 4,
+    "n_layer": 2,
+    "name": "modern_decoder",
+    "rope_base": 10000.0,
+    "vocab_size": 50257,
+    "weight_tying": true
+  },
+  "data": {
+    "data_fraction": "smoke",
+    "manifest_dir": "data/manifests",
+    "sources": [
+      {
+        "glob": "train_smoke*.bin",
+        "name": "fineweb_edu",
+        "notes": "",
+        "path": "data/fineweb-edu",
+        "weight": 0.9
+      },
+      {
+        "glob": "*.bin",
+        "name": "general_web",
+        "notes": "",
+        "path": "data/general-web-smoke",
+        "weight": 0.1
+      }
+    ],
+    "val_data_path": "/private/tmp/cse251b-part3-eval.bin"
+  },
+  "name": "part3-smoke",
+  "optimizer": {
+    "adamw_lr": 0.0003,
+    "betas": [
+      0.9,
+      0.95
+    ],
+    "eps": 1e-08,
+    "momentum": 0.95,
+    "muon_lr": 0.02,
+    "muon_ns_steps": 5,
+    "name": "adamw",
+    "nesterov": true,
+    "weight_decay": 0.1
+  },
+  "train": {
+    "batch_size": 1,
+    "checkpoint_dir": "checkpoints/part3-smoke",
+    "compile": false,
+    "context_schedule": {
+      "end_context_len": 1024,
+      "name": "ramp",
+      "ramp_steps": 1,
+      "start_context_len": 256,
+      "switch_step": 1
+    },
+    "device": "cpu",
+    "eval_batch_size": 1,
+    "eval_batches": 1,
+    "eval_interval": 1,
+    "grad_accum_steps": 1,
+    "grad_clip": 1.0,
+    "log_interval": 1,
+    "max_steps": 2,
+    "min_lr_ratio": 0.1,
+    "save_interval": 1,
+    "seed": 1337,
+    "submission_dir": "submission/part3-smoke",
+    "warmup_steps": 1
+  }
+}

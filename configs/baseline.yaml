@@ -1,0 +1,55 @@
+name: baseline
+
+architecture:
+  name: modern_decoder
+  n_layer: 4
+  d_model: 256
+  n_heads: 4
+  ffn_multiplier: 2.67
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+
+optimizer:
+  name: adamw
+  adamw_lr: 0.0003
+  muon_lr: 0.02
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu
+      path: data/fineweb-edu
+      glob: "**/*.bin"
+      weight: 1.0
+      notes: "Primary educational web corpus from HuggingFaceFW/fineweb-edu."
+  val_data_path: val.bin
+  data_fraction: smoke
+  manifest_dir: data/manifests
+
+train:
+  max_steps: 50
+  batch_size: 2
+  grad_accum_steps: 1
+  grad_clip: 1.0
+  log_interval: 5
+  eval_interval: 25
+  save_interval: 25
+  eval_batch_size: 2
+  eval_batches: 2
+  seed: 1337
+  device: cuda
+  compile: false
+  warmup_steps: 5
+  min_lr_ratio: 0.1
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  context_schedule:
+    name: fixed
+    end_context_len: 1024
