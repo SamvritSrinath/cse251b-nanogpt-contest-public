@@ -17,4 +17,4 @@ if [[ ! -d "${SUBMISSION_DIR}" ]]; then
   exit 1
 fi
 
-huggingface-cli upload "${HF_REPO_ID}" "${SUBMISSION_DIR}" . --repo-type model
+hf upload "${HF_REPO_ID}" "${SUBMISSION_DIR}" . --repo-type model
