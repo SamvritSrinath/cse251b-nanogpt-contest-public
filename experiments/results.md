@@ -10,3 +10,11 @@
 | 20260501-001708 | part3-optuna-smoke-b-trial-0001 | 1127da8b3b | modern_decoder | adamw | 1024 | ramp:256->1024@1+1 | fineweb_edu:0.9,general_web:0.1 | 2 | 6,827,264 | 51088.4316 | study=part3-optuna-smoke-b trial=trial-0001 |
 | 20260501-180319 | baseline | 6c2d8012e5 | modern_decoder | adamw | 2048 | fixed@1024 | fineweb_edu:1 | 50 | 16,017,920 | 6824.4863 | post-prep sanity run |
 | 20260501-180420 | control_from_optuna_trial_0001 | c0600f1079 | modern_decoder | adamw | 16384 | ramp:256->1024@500+500 | fineweb_edu:1 | 3000 | 6,827,264 | 459.1894 | non open text sanity run |
+| 20260502-062445 | control_from_optuna_trial_0001 | 6f522493a2 | modern_decoder | adamw | 16384 | ramp:256->1024@500+500 | fineweb_edu:1 | 3000 | 6,827,264 | 462.7409 | Testing |
+| 20260502-080900 | t4_better_46m | 53c9c4f73f | modern_decoder | muon_hybrid | 16384 | ramp:256->1024@500+1000 | fineweb_edu:1 | 6000 | 46,626,944 | 76.4277 | t4 better 46m |
+
+### Andrew `t4_better_46m` run (`20260502-080900`)
+
+- **Exported weights / code:** `submission/20260502-080900/best` (and `.../final`).
+- **Training data on that machine:** `build-nanogpt/edu_fineweb10B/**/edufineweb_train_*.npy` (see `submission/.../best/config.json`). Repo `configs/t4_better.yaml` is adapted to `data/fineweb-edu/**/*.bin` for this branch.
+- **Code deltas vs main** (not all merged into this branch; snapshots live under `submission/20260502-080900/best/src/`): optional gradient checkpointing in `model.py` / `train.py` / `TrainConfig`; `.npy` shard support in `data.py`; Muon bf16 fallback in `optimizer.py`; `configs/control.yaml` npy source on Andrew’s branch.
