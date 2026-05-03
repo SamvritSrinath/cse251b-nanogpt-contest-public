@@ -114,17 +114,6 @@ def maybe_compile(model: torch.nn.Module, enabled: bool) -> torch.nn.Module:
     return torch.compile(model)
 
 
-def maybe_enable_gradient_checkpointing(model: torch.nn.Module, enabled: bool) -> None:
-    """Enable model-supported activation checkpointing for large T4 runs."""
-
-    if not enabled:
-        return
-    setter = getattr(model, "set_gradient_checkpointing", None)
-    if setter is None:
-        raise ValueError("Configured gradient_checkpointing=true, but model does not support it.")
-    setter(True)
-
-
 def run_training(
     config: ExperimentConfig,
     *,
@@ -144,7 +133,6 @@ def run_training(
     set_seed(config.train.seed)
 
     model = build_model(config).to(device)
-    maybe_enable_gradient_checkpointing(model, config.train.gradient_checkpointing)
     parameter_count = assert_parameter_budget(model)
     print(f"Model parameters: {parameter_count:,}")
 

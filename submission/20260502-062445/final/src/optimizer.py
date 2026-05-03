@@ -30,11 +30,7 @@ def zeroth_power_via_newton_schulz5(
     if grad_matrix.ndim != 2:
         raise ValueError("Muon expects a rank-2 gradient matrix.")
     a, b, c = (3.4445, -4.7750, 2.0315)
-    working_dtype = (
-        torch.bfloat16
-        if grad_matrix.is_cuda and torch.cuda.is_bf16_supported()
-        else torch.float32
-    )
+    working_dtype = torch.bfloat16 if grad_matrix.is_cuda else torch.float32
     x = grad_matrix.to(dtype=working_dtype) / (grad_matrix.norm() + eps)
     transposed = False
     if x.size(0) > x.size(1):

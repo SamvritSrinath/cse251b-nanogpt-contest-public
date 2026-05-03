@@ -19,7 +19,6 @@ from typing import Any, Callable, Mapping
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 
 from src.utils import ArchitectureConfig, ExperimentConfig, extract_architecture_config, safe_torch_load
 
@@ -293,15 +292,9 @@ class DecoderLanguageModel(nn.Module):
         self.blocks = nn.ModuleList([DecoderBlock(config, recipe) for _ in range(config.n_layer)])
         self.final_norm = make_norm(recipe.norm_type, config.d_model)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-        self.gradient_checkpointing = False
         if config.weight_tying:
             self.lm_head.weight = self.token_embedding.weight
         self.apply(self._init_weights)
-
-    def set_gradient_checkpointing(self, enabled: bool) -> None:
-        """Enable activation checkpointing for memory-constrained training."""
-
-        self.gradient_checkpointing = enabled
 
     def _init_weights(self, module: nn.Module) -> None:
         """Initialize module weights with GPT-style defaults."""
@@ -330,10 +323,7 @@ class DecoderLanguageModel(nn.Module):
             x = x + self.position_embedding(positions)[None, :, :]
         x = self.dropout(x)
         for block in self.blocks:
-            if self.gradient_checkpointing and self.training:
-                x = checkpoint(block, x, use_reentrant=False)
-            else:
-                x = block(x)
+            x = block(x)
         x = self.final_norm(x)
         return self.lm_head(x)
 
@@ -348,11 +338,6 @@ class GPT(nn.Module):
         self.config = config
         self.recipe = resolve_architecture_recipe(config)
         self.impl = DecoderLanguageModel(config, self.recipe)
-
-    def set_gradient_checkpointing(self, enabled: bool) -> None:
-        """Forward the training-only checkpointing switch to the implementation."""
-
-        self.impl.set_gradient_checkpointing(enabled)
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Delegate the forward pass to the resolved implementation."""

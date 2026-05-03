@@ -9,11 +9,26 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 UPSTREAM_DIR="${REPO_ROOT}/build-nanogpt"
 OUT_DIR="${REPO_ROOT}/data/fineweb-edu"
-# PYTHON_BIN="${PYTHON_BIN:-${REPO_ROOT}/.venv/bin/python}"
-PYTHON_BIN="/home/zeus/miniconda3/envs/cloudspace/bin/python"
 
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  PYTHON_BIN="${FALLBACK_PYTHON_BIN:-python3.11}"
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -n "${PYTHON_BIN}" && ! -x "${PYTHON_BIN}" ]]; then
+  echo "PYTHON_BIN is set but is not executable: ${PYTHON_BIN}" >&2
+  exit 1
+fi
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+  if [[ -x "/home/zeus/miniconda3/envs/cloudspace/bin/python" ]]; then
+    PYTHON_BIN="/home/zeus/miniconda3/envs/cloudspace/bin/python"
+  elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+    PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+  else
+    PYTHON_BIN="$(command -v python || true)"
+  fi
+fi
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+  echo "Could not find Python. Set PYTHON_BIN=/path/to/python and retry." >&2
+  exit 1
 fi
 
 mkdir -p "${REPO_ROOT}/data"

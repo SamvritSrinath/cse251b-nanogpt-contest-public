@@ -132,73 +132,215 @@ See `model_example.py` in this repo for a complete working example.
 
 ## Getting Started
 
-### 1. Clone this repo
+This repository now includes a config-driven training stack in `src/`, helper
+scripts in `scripts/`, experiment configs in `configs/`, and exported submission
+bundles under `submission/`.
+
+### 1. Environment Setup
+
+In a Studio, do not create a repo-local virtual environment with
+`python3 -m venv .venv`. Studios allow one default conda environment, so use the
+existing Python environment instead.
+
+Check the active Python:
 
 ```bash
-git clone https://github.com/YOUR_ORG/cse251b-competition.git
-cd cse251b-competition
-pip install -r requirements.txt
+python --version
+which python
 ```
 
-### 2. Start with nanoGPT
-
-We recommend [Andrej Karpathy's nanoGPT](https://github.com/karpathy/nanoGPT) as a starting point. It's a clean, minimal GPT-2 implementation in ~600 lines of Python/PyTorch that is easy to read and modify.
-
-- [nanoGPT repository](https://github.com/karpathy/nanoGPT)
-- [Karpathy's "Let's build GPT" video](https://www.youtube.com/watch?v=kCc8FmEb1nY) (excellent walkthrough)
-- [build-nanogpt](https://github.com/karpathy/build-nanogpt) (newer companion repo with FineWeb data loading)
-
-### 3. Get training data
-
-Download and tokenize FineWeb-Edu:
+Install dependencies into the active environment:
 
 ```bash
-# Using Karpathy's build-nanogpt data script:
-git clone https://github.com/karpathy/build-nanogpt.git
-cd build-nanogpt
-python fineweb.py
+python -m pip install -r requirements.txt
 ```
 
-This downloads the FineWeb-Edu 10B-token sample and tokenizes it into binary shards. You can also use [nanoGPT's data preparation scripts](https://github.com/karpathy/nanoGPT/tree/master/data) for other datasets like OpenWebText.
-
-### 4. Train a baseline
-
-Train a small model to verify everything works:
+If `pip` fails on an old local build path such as `package @ file:///home/...`,
+filter those local-only entries and install the cleaned requirements file:
 
 ```bash
-# Example using nanoGPT (adjust paths to your setup):
-python train.py --dataset=fineweb --n_layer=8 --n_head=8 --n_embd=512 --max_iters=5000
+grep -v ' @ file:' requirements.txt > /tmp/requirements.clean.txt
+python -m pip install -r /tmp/requirements.clean.txt
 ```
 
-### 5. Evaluate on the val set
+The helper scripts resolve Python in this order:
+
+1. `PYTHON_BIN`, if you set it.
+2. `/home/zeus/miniconda3/envs/cloudspace/bin/python`, the default Studio conda Python.
+3. `.venv/bin/python`, for non-Studio local clones.
+4. `python` from `PATH`.
+
+To force a specific interpreter:
 
 ```bash
-# Local eval during development
-python evaluate.py --model_dir /path/to/your/model/ --data val.bin
+PYTHON_BIN="$(which python)" ./scripts/run_experiment.sh configs/baseline.yaml
+```
 
-# Once you've uploaded to HuggingFace, verify the submission works:
+### 2. Project Layout
+
+- `src/model.py`: decoder-only language model implementations and architecture registry.
+- `src/train.py`: main training loop, validation, checkpointing, and submission export.
+- `src/data.py`: weighted shard sampler and validation batching for GPT-2-tokenized `.bin` files.
+- `src/optimizer.py`: AdamW and Muon/AdamW hybrid optimizers.
+- `src/search.py`: grid and Optuna study runner.
+- `src/utils.py`: config dataclasses, LR schedules, checkpoint helpers, and export utilities.
+- `configs/`: ready-to-run experiment configs.
+- `configs/studies/`: search study configs.
+- `scripts/`: shell wrappers for data prep, training, studies, and HuggingFace upload.
+- `evaluate.py`: contest-compatible local/HuggingFace perplexity evaluator.
+- `model.py`: submission entrypoint shim that exposes `load_model()`.
+
+### 3. Training Data
+
+`val.bin` is provided for validation only. Do not train on it.
+
+Training expects GPT-2-tokenized uint16 `.bin` shards under paths configured in
+the YAML files, usually `data/fineweb-edu`. To download and tokenize FineWeb-Edu
+through Karpathy's `build-nanogpt` flow, run:
+
+```bash
+./scripts/prep_data.sh
+```
+
+The script clones `build-nanogpt` if needed, runs `fineweb.py`, and copies `.bin`
+shards into `data/fineweb-edu`.
+
+You can inspect or build cached shard manifests without starting training:
+
+```bash
+python -m src.data --config configs/baseline.yaml --print-only
+```
+
+To add another corpus, place its `.bin` shards under `data/<source-name>/` and add
+another entry under `data.sources` in a config file.
+
+### 4. Train an Experiment
+
+Run the smoke baseline:
+
+```bash
+./scripts/run_experiment.sh configs/baseline.yaml --notes "smoke test"
+```
+
+Equivalent direct command:
+
+```bash
+python src/train.py --config configs/baseline.yaml --notes "smoke test"
+```
+
+Useful configs:
+
+- `configs/baseline.yaml`: short smoke run.
+- `configs/small.yaml`: small model and short training run.
+- `configs/medium.yaml`: medium-scale Muon hybrid run.
+- `configs/full.yaml`: larger under-100M model.
+- `configs/control.yaml`: longer control run from the smoke-study settings.
+
+Training writes:
+
+- `checkpoints/<run-id>/latest.pt`
+- `checkpoints/<run-id>/best.pt`
+- `checkpoints/<run-id>/ckpt_step*.pt`
+- `submission/<run-id>/best/`
+- `submission/<run-id>/final/`
+- `experiments/results.md`
+
+The `submission/<run-id>/best/` and `submission/<run-id>/final/` folders contain
+`checkpoint.pt`, `config.json`, `model.py`, and `src/`, so they can be evaluated
+or uploaded directly.
+
+### 5. Evaluate Locally
+
+Evaluate the best exported bundle:
+
+```bash
+python evaluate.py --model_dir submission/<run-id>/best --data val.bin
+```
+
+Use CPU only if CUDA is unavailable or you are debugging a small run:
+
+```bash
+python evaluate.py --model_dir submission/<run-id>/best --data val.bin --device cpu
+```
+
+The evaluator checks the submission interface, parameter count, output vocab size
+`50257`, and reports perplexity.
+
+### 6. Run Search Studies
+
+Run a deterministic grid smoke study:
+
+```bash
+./scripts/run_study.sh configs/studies/grid_smoke.yaml
+```
+
+Run an Optuna smoke study:
+
+```bash
+./scripts/run_study.sh configs/studies/optuna_smoke.yaml
+```
+
+Study results are written under `experiments/studies/<study-name>/`, including
+per-trial resolved configs, summaries, checkpoints, and submission bundles.
+
+### 7. Upload a Submission Bundle
+
+After choosing a `best` or `final` bundle, upload it to HuggingFace:
+
+```bash
+huggingface-cli login
+./scripts/submit_hf.sh your-username/cse251b-group-XX submission/<run-id>/best
+```
+
+Verify the HuggingFace repo exactly as the TAs will load it:
+
+```bash
 python evaluate.py --hf_repo your-username/cse251b-group-XX --data val.bin
 ```
 
-### 6. Iterate!
+### 8. Current Implementation Notes
 
-The fun part. Some directions to explore (non-exhaustive):
+The model code supports two architecture recipes:
 
-- **Architecture:** How should you allocate your 100M parameter budget? Deeper vs. wider? More heads or fewer? What activation function? What positional encoding?
-- **Optimizer:** AdamW is the default, but alternatives like [Muon](https://github.com/KellerJordan/modded-nanogpt), Lion, or Sophia may converge faster.
-- **Learning rate schedule:** Warmup + cosine decay is standard. Can you do better?
-- **Data:** Would mixing in other sources help generalization?
-- **Regularization:** Dropout? Weight decay? How much?
-- **Training tricks:** Multi-token prediction? Sequence length scheduling? Batch size scheduling?
+- `modern_decoder`: RoPE, RMSNorm, SwiGLU, no bias by default.
+- `gpt2_decoder`: learned absolute positions, LayerNorm, GELU, bias by default.
 
-### 7. Experiment efficiently
+The optimizer registry supports:
 
-You don't need to run full training to test every idea. A good workflow:
+- `adamw`
+- `muon_hybrid`, which applies Muon to hidden-layer matrices and AdamW to
+  embeddings, output head, and vector parameters.
 
-1. **Debug on Shakespeare** (seconds, free) — verify code changes don't crash.
-2. **Test on 10% of data** (~5-10 min on a 4090) — compare ideas cheaply.
-3. **Validate on 50% of data** (~25 min) — confirm improvements hold.
-4. **Full run** (~60 min for ~50M params on 500M tokens) — final experiments.
+Training supports fixed or ramped context length schedules. Validation always
+uses the configured full context length, typically 1024.
+
+### 9. Troubleshooting
+
+**`Venv creation is not allowed`**
+
+Use the Studio's default conda environment. Do not run `python3 -m venv .venv` in
+this Studio.
+
+**`No training shards found`**
+
+Run `./scripts/prep_data.sh`, or update `data.sources[*].path` in your config to
+point at a directory containing GPT-2-tokenized `.bin` shards.
+
+**`ModuleNotFoundError` or missing packages**
+
+Install requirements into the active environment:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+If a local `@ file:` path appears, use the cleaned install command from
+[Environment Setup](#1-environment-setup).
+
+**CUDA is unavailable**
+
+The training code falls back to CPU when `device: cuda` is requested but CUDA is
+not available. CPU training and evaluation will be much slower.
 
 ## Timeline
 

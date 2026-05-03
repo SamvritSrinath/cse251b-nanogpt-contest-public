@@ -223,7 +223,6 @@ class TrainConfig:
     seed: int = 1337
     device: str = "cuda"
     compile: bool = False
-    gradient_checkpointing: bool = False
     warmup_steps: int | None = None
     min_lr_ratio: float = 0.1
     checkpoint_dir: str = "checkpoints"
@@ -248,7 +247,6 @@ class TrainConfig:
             seed=int(data.get("seed", 1337)),
             device=str(data.get("device", "cuda")),
             compile=bool(data.get("compile", False)),
-            gradient_checkpointing=bool(data.get("gradient_checkpointing", False)),
             warmup_steps=None if data.get("warmup_steps") is None else int(data["warmup_steps"]),
             min_lr_ratio=float(data.get("min_lr_ratio", 0.1)),
             checkpoint_dir=str(data.get("checkpoint_dir", "checkpoints")),
