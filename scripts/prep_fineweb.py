@@ -9,8 +9,8 @@ shard boundaries and val/train naming), but:
 - Configurable ``imap`` **chunksize** (upstream uses 16; larger values cut IPC overhead).
 - Worker **initializer** so each process loads tiktoken once (spawn-safe).
 
-For a native text-agnostic pipeline (HF Hub or local parquet → GPT-2 ``.bin``), see
-``tools/corpus-prep`` and ``./scripts/prep_data.sh`` (Rust via ``prep/corpus.sh`` when ``cargo`` is on ``PATH``).
+For the canonical dataset-agnostic pipeline (HF snapshot or local parquet → GPT-2 ``.bin``),
+see ``./scripts/ingest_data.sh`` and ``./scripts/corpus_prep.sh``.
 
 Note: ``datasets.map`` on a **streaming** iterable does not parallelize tokenization the way
 Gemini-style snippets suggest; batched ``map`` returns one row per batch shape, not one mega-list.

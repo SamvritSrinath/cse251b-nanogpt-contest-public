@@ -4,12 +4,29 @@ The default training corpus in this repository is **FineWeb-Edu**, sourced from 
 
 ## How data is prepared
 
-1. Run `./scripts/prep_data.sh`.
-2. The script clones Karpathy's `build-nanogpt` repository if needed.
-3. `fineweb.py` downloads and tokenizes FineWeb-Edu using the GPT-2 tokenizer.
-4. The resulting `.bin` shards are copied into `data/fineweb-edu/`.
+1. The canonical one-shot ingest entrypoint is `./scripts/ingest_data.sh`.
+2. In HF mode it downloads a dataset snapshot locally with the HF CLI, recursively discovers `*.parquet`, tokenizes them with the Rust `corpus-prep` binary, and by default deletes the temporary parquet cache after success.
+3. In local mode it skips the download step and tokenizes an existing recursive parquet tree.
+4. `./scripts/prep_data.sh` is the config-driven wrapper that resolves `data.sources` and delegates actual local builds to `ingest_data.sh`.
+5. `scripts/prep_fineweb.py` remains as a legacy Python fallback for FineWeb-Edu only when explicitly requested.
 
 These shards are then read lazily with `numpy.memmap`, so training never loads the full corpus into RAM.
+
+## Why `.bin` instead of `.npy`
+
+This repository standardizes on raw `uint16` `.bin` shards rather than `.npy`.
+
+- `.bin` is the simplest representation for `numpy.memmap` and for non-Python tools such as the Rust `corpus-prep` binary.
+- `.npy` is self-describing and slightly safer for ad hoc inspection, but it adds a NumPy-specific header and does not buy much for this training path.
+- For this codebase, `.bin` is the better fit because the loader only needs flat GPT-2 token IDs and already knows the dtype.
+
+## GCP workflow
+
+For fresh GCP VMs, use the quick-start helpers in [`docs/gcp_quickstart.md`](./gcp_quickstart.md):
+
+1. mount the attached disk with `./scripts/gcp_mount_disk.sh`,
+2. bootstrap a `data` or `train` environment with `./scripts/setup_env.sh`,
+3. materialize FineWeb-Edu or another parquet-backed HF dataset with `./scripts/ingest_data.sh` when preparing a data VM.
 
 ## How the training loader uses the data
 

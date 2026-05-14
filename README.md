@@ -150,16 +150,16 @@ We recommend [Andrej Karpathy's nanoGPT](https://github.com/karpathy/nanoGPT) as
 
 ### 3. Get training data
 
-Download and tokenize FineWeb-Edu:
+Preferred in this repository:
 
 ```bash
-# Using Karpathy's build-nanogpt data script:
-git clone https://github.com/karpathy/build-nanogpt.git
-cd build-nanogpt
-python fineweb.py
+./scripts/prep_data.sh
 ```
 
-This downloads the FineWeb-Edu 10B-token sample and tokenizes it into binary shards. You can also use [nanoGPT's data preparation scripts](https://github.com/karpathy/nanoGPT/tree/master/data) for other datasets like OpenWebText.
+This prepares the configured corpora and writes GPT-2-tokenized `.bin` shards under `data/`.
+For direct ingestion from Hugging Face parquet snapshots, use `./scripts/ingest_data.sh --help`.
+For workspace/bootstrap guidance and mounted-disk usage, see [docs/gcp_quickstart.md](docs/gcp_quickstart.md).
+For direct access to the Rust tokenizer without remembering the Cargo target path, use `./scripts/corpus_prep.sh --help`.
 
 ### 4. Train a baseline
 

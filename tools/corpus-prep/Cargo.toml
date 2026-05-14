@@ -10,7 +10,7 @@ anyhow = "1"
 bytemuck = "1"
 clap = { version = "4", features = ["derive"] }
 hf-hub = "0.3"
-parquet = { version = "54", default-features = false, features = ["arrow"] }
+parquet = { version = "54", default-features = false, features = ["arrow","snap","brotli","flate2","lz4","zstd"] }
 arrow-array = "54"
 arrow-schema = "54"
 rayon = "1"
