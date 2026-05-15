@@ -1,0 +1,10 @@
+export WORKSPACE_ROOT="/home/samvrit/GPT"
+export XDG_CACHE_HOME="/home/samvrit/GPT/.cache"
+export PIP_CACHE_DIR="/home/samvrit/GPT/.cache/pip"
+export HF_HOME="/home/samvrit/GPT/.hf"
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export CARGO_HOME="/home/samvrit/GPT/.cargo"
+export RUSTUP_HOME="/home/samvrit/GPT/.rustup"
+export CONDA_PKGS_DIRS="/home/samvrit/GPT/.conda/pkgs"
+export CONDA_ENVS_PATH="/home/samvrit/GPT/.conda/envs"
+export PATH="/home/samvrit/GPT/.cargo/bin:$PATH"

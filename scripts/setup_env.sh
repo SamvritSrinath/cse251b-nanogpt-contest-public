@@ -143,7 +143,10 @@ command -v git >/dev/null 2>&1 || {
   exit 1
 }
 
-if [[ "${ROLE}" == "data" ]] && ! command -v cargo >/dev/null 2>&1; then
+# Pin Rust to the workspace CARGO_HOME/RUSTUP_HOME from the env file. If we only checked
+# `command -v cargo`, a user-level cargo would skip rustup-init while RUSTUP_HOME still
+# pointed at an empty workspace .rustup, and builds would fail with "no default toolchain".
+if [[ "${ROLE}" == "data" ]] && [[ ! -x "${CARGO_HOME}/bin/cargo" ]]; then
   command -v curl >/dev/null 2>&1 || {
     echo "setup-env: curl is required to install rustup" >&2
     exit 1
@@ -154,6 +157,21 @@ fi
 if [[ -f "${CARGO_HOME}/env" ]]; then
   # shellcheck disable=SC1090
   source "${CARGO_HOME}/env"
+fi
+
+# rustup can be on PATH with no default toolchain (fresh multi-user installs, or interrupted
+# setup). cargo then fails with: "rustup could not choose a version of cargo to run".
+if [[ "${ROLE}" == "data" ]]; then
+  _rustup=""
+  if [[ -x "${CARGO_HOME}/bin/rustup" ]]; then
+    _rustup="${CARGO_HOME}/bin/rustup"
+  elif command -v rustup >/dev/null 2>&1; then
+    _rustup="$(command -v rustup)"
+  fi
+  if [[ -n "${_rustup}" ]]; then
+    "${_rustup}" toolchain install stable --profile minimal
+    "${_rustup}" default stable
+  fi
 fi
 
 if [[ ! -d "${VENV_DIR}" ]]; then
@@ -198,3 +216,4 @@ else
   echo "setup-env: source ${ACTIVATE_PATH}"
   echo "setup-env: next step: ./scripts/run_experiment.sh configs/small.yaml --notes \"smoke test\""
 fi
+

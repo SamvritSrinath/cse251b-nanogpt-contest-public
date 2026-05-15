@@ -12,3 +12,4 @@
 | 20260501-180420 | control_from_optuna_trial_0001  | c0600f1079  | modern_decoder | adamw       | 16384        | ramp:256->1024@500+500  | fineweb_edu:1                   | 3000  | 6,827,264  | 459.1894   | non open text sanity run                    |
 | 20260502-062445 | control_from_optuna_trial_0001  | 6f522493a2  | modern_decoder | adamw       | 16384        | ramp:256->1024@500+500  | fineweb_edu:1                   | 3000  | 6,827,264  | 462.7409   | Testing                                     |
 | 20260502-080900 | t4_better_46m                   | 53c9c4f73f  | modern_decoder | muon_hybrid | 16384        | ramp:256->1024@500+1000 | fineweb_edu:1                   | 6000  | 46,626,944 | 76.4277    | t4 better 46m                               |
+| 20260514-012017 | full | df767708f3 | modern_decoder | muon_hybrid | 65536 | fixed@1024 | fineweb_edu:1 | 10000 | 92,723,328 | 36.5558 | full run |

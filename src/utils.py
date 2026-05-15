@@ -223,10 +223,13 @@ class TrainConfig:
     seed: int = 1337
     device: str = "cuda"
     compile: bool = False
+    precision: str = "fp32"
     warmup_steps: int | None = None
     min_lr_ratio: float = 0.1
     checkpoint_dir: str = "checkpoints"
     submission_dir: str = "submission"
+    resume_from: str | None = None
+    log_cuda_memory: bool = False
     context_schedule: ContextScheduleConfig = field(default_factory=ContextScheduleConfig)
 
     @classmethod
@@ -234,6 +237,11 @@ class TrainConfig:
         """Build a train config from a plain mapping."""
 
         eval_batches_raw = data.get("eval_batches", 16)
+        precision = str(data.get("precision", "fp32")).lower()
+        if precision not in {"fp32", "bf16"}:
+            raise ValueError(
+                f"Unsupported train.precision '{precision}'. Supported values: fp32, bf16."
+            )
         return cls(
             max_steps=int(data["max_steps"]),
             batch_size=int(data["batch_size"]),
@@ -247,10 +255,13 @@ class TrainConfig:
             seed=int(data.get("seed", 1337)),
             device=str(data.get("device", "cuda")),
             compile=bool(data.get("compile", False)),
+            precision=precision,
             warmup_steps=None if data.get("warmup_steps") is None else int(data["warmup_steps"]),
             min_lr_ratio=float(data.get("min_lr_ratio", 0.1)),
             checkpoint_dir=str(data.get("checkpoint_dir", "checkpoints")),
             submission_dir=str(data.get("submission_dir", "submission")),
+            resume_from=None if data.get("resume_from") is None else str(data["resume_from"]),
+            log_cuda_memory=bool(data.get("log_cuda_memory", False)),
             context_schedule=ContextScheduleConfig.from_dict(data.get("context_schedule")),
         )
 
