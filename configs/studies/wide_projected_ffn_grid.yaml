@@ -1,0 +1,13 @@
+name: wide_projected_ffn_grid
+mode: grid
+base_config: configs/wide_projected_8l_192_768.yaml
+output_dir: experiments/studies
+objective:
+  metric: val_ppl
+  direction: minimize
+parallelism: 1
+resume: true
+search_space:
+  - path: architecture.ffn_multiplier
+    type: categorical
+    values: [2.0, 2.1, 2.15]

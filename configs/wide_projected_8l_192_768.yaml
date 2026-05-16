@@ -1,0 +1,70 @@
+name: wide_projected_8l_192_768
+
+architecture:
+  name: projected_modern_decoder
+  n_layer: 8
+  embedding_dim: 192
+  d_model: 768
+  n_heads: 12
+  ffn_multiplier: 2.15
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.0003
+  muon_lr: 0.02
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu
+      path: data/fineweb-edu
+      glob: "**/*.bin"
+      weight: 0.75
+    - name: openwebtext
+      path: data/openwebtext
+      glob: "**/*.bin"
+      weight: 0.15
+    - name: wikimedia
+      path: data/wikimedia
+      glob: "**/*.bin"
+      weight: 0.09
+    - name: arxiv_abstracts
+      path: data/arxiv-abstracts
+      glob: "**/*.bin"
+      weight: 0.01
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests
+
+train:
+  max_steps: 1200
+  batch_size: 16
+  grad_accum_steps: 2
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 400
+  save_interval: 400
+  eval_batch_size: 8
+  eval_batches: 64
+  seed: 1337
+  device: cuda
+  compile: false
+  precision: fp32
+  warmup_steps: 100
+  min_lr_ratio: 0.1
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  context_schedule:
+    name: fixed
+    end_context_len: 1024

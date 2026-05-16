@@ -1,0 +1,16 @@
+name: small_reg_grid
+mode: grid
+base_config: configs/small_v2_mix_ablation.yaml
+output_dir: experiments/studies
+objective:
+  metric: val_ppl
+  direction: minimize
+parallelism: 1
+resume: true
+search_space:
+  - path: optimizer.weight_decay
+    type: categorical
+    values: [0.03, 0.05, 0.1, 0.2]
+  - path: architecture.dropout
+    type: categorical
+    values: [0.0, 0.02, 0.05]

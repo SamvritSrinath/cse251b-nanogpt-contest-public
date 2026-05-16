@@ -1,0 +1,16 @@
+name: small_schedule_grid
+mode: grid
+base_config: configs/small_v2_mix_ablation.yaml
+output_dir: experiments/studies
+objective:
+  metric: val_ppl
+  direction: minimize
+parallelism: 1
+resume: true
+search_space:
+  - path: train.warmup_steps
+    type: categorical
+    values: [100, 300, 500]
+  - path: train.min_lr_ratio
+    type: categorical
+    values: [0.05, 0.1, 0.2]
