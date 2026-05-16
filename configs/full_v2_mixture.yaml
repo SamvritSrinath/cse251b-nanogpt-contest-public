@@ -39,13 +39,13 @@ data:
     - name: wikimedia
       path: data/wikimedia
       glob: '**/*.bin'
-      weight: 0.06
+      weight: 0.09
       notes: 'Template slot for Wikipedia or Wikimedia-derived text.'
-    - name: stackexchange
-      path: data/stackexchange
-      glob: '**/*.bin'
-      weight: 0.03
-      notes: 'Template slot for StackExchange-style conversational technical data.'
+    # - name: stackexchange
+    #   path: data/stackexchange
+    #   glob: '**/*.bin'
+    #   weight: 0.03
+    #   notes: 'Template slot for StackExchange-style conversational technical data.'
     - name: arxiv_abstracts
       path: data/arxiv-abstracts
       glob: '**/*.bin'
@@ -57,8 +57,8 @@ data:
 
 train:
   max_steps: 15000
-  batch_size: 24
-  grad_accum_steps: 3
+  batch_size: 16
+  grad_accum_steps: 6
   grad_clip: 1.0
   log_interval: 50
   eval_interval: 500

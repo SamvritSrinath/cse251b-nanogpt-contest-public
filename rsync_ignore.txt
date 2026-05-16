@@ -10,3 +10,5 @@ tools/corpus-prep/target/
 .rustup
 .venv
 .cache
+.hf
+checkpoints/
