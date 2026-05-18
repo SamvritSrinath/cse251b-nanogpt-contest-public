@@ -1,0 +1,14 @@
+.git
+.venv/
+data/
+.DS_Store
+repopack_output
+__pycache__/
+submission/
+tools/corpus-prep/target/
+.cargo
+.rustup
+.venv
+.cache
+.hf
+checkpoints/

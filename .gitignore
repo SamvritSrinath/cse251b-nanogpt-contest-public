@@ -223,13 +223,20 @@ submission/**
 !submission/**/final/model.py
 !submission/**/best/src/**
 !submission/**/final/src/**
+submission/**/__pycache__/
 
 # Study outputs (ignore generated binary state, keep summaries/configs)
 experiments/studies/**/checkpoints/
 experiments/studies/**/submission/**
 experiments/studies/**/optuna_study.db
 
+# Rust Tooling
+tools/corpus-prep/target/
 # Marimo
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# complete AI Output
+repopack-output.txt
+.repopackignore

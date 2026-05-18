@@ -39,7 +39,6 @@ from src.utils import (
     maybe_enable_tf32,
     resolve_context_length,
     resolve_device,
-    safe_torch_load,
     save_training_checkpoint,
     save_yaml,
     set_optimizer_lr,
@@ -76,8 +75,6 @@ def evaluate_validation_loss(
     batch_size: int,
     device: str,
     max_batches: int | None,
-    autocast_enabled: bool = False,
-    autocast_device_type: str = "cuda",
 ) -> tuple[float, float]:
     """Compute validation loss and perplexity using ``evaluate.py``-compatible slicing."""
 
@@ -93,17 +90,12 @@ def evaluate_validation_loss(
         device=device,
         max_batches=max_batches,
     ):
-        with torch.autocast(
-            device_type=autocast_device_type,
-            dtype=torch.bfloat16,
-            enabled=autocast_enabled,
-        ):
-            logits = model(inputs)
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                targets.reshape(-1),
-                reduction="sum",
-            )
+        logits = model(inputs)
+        loss = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)),
+            targets.reshape(-1),
+            reduction="sum",
+        )
         total_loss += loss.item()
         total_tokens += targets.numel()
 
@@ -122,18 +114,15 @@ def maybe_compile(model: torch.nn.Module, enabled: bool) -> torch.nn.Module:
     return torch.compile(model)
 
 
-def log_cuda_memory_stats(label: str) -> None:
-    """Print a short CUDA memory snapshot when instrumentation is enabled."""
+def maybe_enable_gradient_checkpointing(model: torch.nn.Module, enabled: bool) -> None:
+    """Enable model-supported activation checkpointing for large T4 runs."""
 
-    allocated_gb = torch.cuda.memory_allocated() / 1e9
-    reserved_gb = torch.cuda.memory_reserved() / 1e9
-    max_allocated_gb = torch.cuda.max_memory_allocated() / 1e9
-    print(
-        f"{label} "
-        f"vram_allocated_gb={allocated_gb:.2f} "
-        f"vram_reserved_gb={reserved_gb:.2f} "
-        f"vram_max_allocated_gb={max_allocated_gb:.2f}"
-    )
+    if not enabled:
+        return
+    setter = getattr(model, "set_gradient_checkpointing", None)
+    if setter is None:
+        raise ValueError("Configured gradient_checkpointing=true, but model does not support it.")
+    setter(True)
 
 
 def run_training(
@@ -153,39 +142,13 @@ def run_training(
     maybe_enable_tf32()
     device = resolve_device(config.train.device)
     set_seed(config.train.seed)
-    device_is_cuda = device.startswith("cuda")
-    use_bf16 = device_is_cuda and config.train.precision == "bf16"
-    autocast_device_type = "cuda" if device_is_cuda else "cpu"
-    if use_bf16 and not torch.cuda.is_bf16_supported():
-        raise ValueError("train.precision=bf16 requires CUDA BF16 support on the selected device.")
 
     model = build_model(config).to(device)
+    maybe_enable_gradient_checkpointing(model, config.train.gradient_checkpointing)
     parameter_count = assert_parameter_budget(model)
     print(f"Model parameters: {parameter_count:,}")
 
     optimizer = build_optimizer(model, config.optimizer)
-    initial_step = 0
-    best_val_ppl = float("inf")
-    best_val_loss = float("inf")
-    if config.train.resume_from is not None:
-        resume_path = Path(config.train.resume_from)
-        state = safe_torch_load(resume_path, map_location=device)
-        if not isinstance(state, dict) or "model_state_dict" not in state:
-            raise ValueError(
-                f"Expected a training checkpoint at {resume_path} with model_state_dict and "
-                "optimizer_state_dict entries."
-            )
-        model.load_state_dict(state["model_state_dict"])
-        optimizer.load_state_dict(state["optimizer_state_dict"])
-        initial_step = int(state.get("step", 0))
-        resumed_val_ppl = float(state.get("val_ppl", float("inf")))
-        best_val_ppl = resumed_val_ppl
-        if math.isfinite(resumed_val_ppl) and resumed_val_ppl > 0.0:
-            best_val_loss = math.log(resumed_val_ppl)
-        print(
-            f"Resumed checkpoint: path={resume_path} step={initial_step} "
-            f"best_val_ppl={best_val_ppl:.4f}"
-        )
     model = maybe_compile(model, config.train.compile)
 
     manifests = load_source_manifests(config.data)
@@ -208,25 +171,18 @@ def run_training(
         },
     )
 
-    if initial_step >= config.train.max_steps:
-        raise ValueError(
-            f"resume_from step {initial_step} is already at or beyond max_steps "
-            f"{config.train.max_steps}."
-        )
+    best_val_ppl = float("inf")
+    best_val_loss = float("inf")
     best_submission_dir: Path | None = None
     tokens_since_log = 0
     python_last_log_time = time.time()
-    logged_first_step_memory = False
-    if config.train.log_cuda_memory and device_is_cuda:
-        torch.cuda.reset_peak_memory_stats()
-        log_cuda_memory_stats("startup")
 
     context_schedule_label = format_context_schedule(
         config.train.context_schedule,
         max_context_len=config.architecture.context_len,
     )
     model.train()
-    for step in range(initial_step + 1, config.train.max_steps + 1):
+    for step in range(1, config.train.max_steps + 1):
         optimizer.zero_grad(set_to_none=True)
         train_loss = 0.0
         train_context_len = resolve_context_length(
@@ -255,16 +211,11 @@ def run_training(
             # Validation always uses the full configured context, but training batches
             # can follow a curriculum schedule to make early updates cheaper.
             inputs, targets = train_loader.next_batch(device, context_len=train_context_len)
-            with torch.autocast(
-                device_type=autocast_device_type,
-                dtype=torch.bfloat16,
-                enabled=use_bf16,
-            ):
-                logits = model(inputs)
-                loss = F.cross_entropy(
-                    logits.reshape(-1, logits.size(-1)),
-                    targets.reshape(-1),
-                )
+            logits = model(inputs)
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                targets.reshape(-1),
+            )
             train_loss += loss.item()
             (loss / config.train.grad_accum_steps).backward()
             tokens_since_log += inputs.numel()
@@ -272,11 +223,8 @@ def run_training(
         if config.train.grad_clip > 0.0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.train.grad_clip)
         optimizer.step()
-        if config.train.log_cuda_memory and device_is_cuda and not logged_first_step_memory:
-            log_cuda_memory_stats("after_first_step")
-            logged_first_step_memory = True
 
-        if step % config.train.log_interval == 0 or step == initial_step + 1:
+        if step % config.train.log_interval == 0 or step == 1:
             now = time.time()
             elapsed = max(1e-6, now - python_last_log_time)
             tokens_per_second = format_tokens_per_second(tokens_since_log, elapsed)
@@ -302,8 +250,6 @@ def run_training(
                 batch_size=config.train.eval_batch_size,
                 device=device,
                 max_batches=config.train.eval_batches,
-                autocast_enabled=False,
-                autocast_device_type=autocast_device_type,
             )
             print(
                 f"step={step:06d} "

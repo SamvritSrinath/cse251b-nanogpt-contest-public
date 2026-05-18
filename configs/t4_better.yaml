@@ -1,17 +1,17 @@
-name: full
+name: t4_better_46m
 
 architecture:
   name: modern_decoder
-  # 16 x 768 exceeds the 100M contest cap for dense MHA + SwiGLU.
-  # This keeps the requested depth while moving to an under-budget width.
-  n_layer: 16
-  d_model: 576
-  n_heads: 12
+  n_layer: 10
+  d_model: 448
+  n_heads: 7
   ffn_multiplier: 2.67
   context_len: 1024
   vocab_size: 50257
   weight_tying: true
   dropout: 0.0
+  bias: null
+  rope_base: 10000.0
 
 optimizer:
   name: muon_hybrid
@@ -28,31 +28,34 @@ data:
   sources:
     - name: fineweb_edu
       path: data/fineweb-edu
-      glob: "**/edufineweb_train_*.bin"
+      glob: "**/*.bin"
       weight: 1.0
-      notes: "Primary educational web corpus from HuggingFaceFW/fineweb-edu."
+      notes: "Bin shards (same layout as medium.yaml). Original t4_better used build-nanogpt/edu_fineweb10B *.npy."
   val_data_path: val.bin
   data_fraction: 100%
   manifest_dir: data/manifests
 
 train:
-  max_steps: 10000
+  max_steps: 6000
   batch_size: 8
-  grad_accum_steps: 8
+  grad_accum_steps: 2
   grad_clip: 1.0
-  log_interval: 50
+  log_interval: 20
   eval_interval: 500
   save_interval: 500
   eval_batch_size: 8
-  eval_batches: 64
+  eval_batches: 32
   seed: 1337
   device: cuda
   compile: false
-  precision: bf16
-  warmup_steps: 100
+  gradient_checkpointing: false
+  warmup_steps: 200
   min_lr_ratio: 0.1
   checkpoint_dir: checkpoints
   submission_dir: submission
   context_schedule:
-    name: fixed
+    name: ramp
+    start_context_len: 256
     end_context_len: 1024
+    switch_step: 500
+    ramp_steps: 1000
