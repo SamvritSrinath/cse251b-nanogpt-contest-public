@@ -7,10 +7,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 cd "${REPO_ROOT}"
 
-if [[ ! -x "${REPO_ROOT}/.venv/bin/python" ]]; then
-  echo "Expected ${REPO_ROOT}/.venv/bin/python. Create the virtualenv first." >&2
-  exit 1
-fi
+# if [[ ! -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+#   echo "Expected ${REPO_ROOT}/.venv/bin/python. Create the virtualenv first." >&2
+#   exit 1
+# fi
 
 STUDY_PATH="${1:-}"
 if [[ -z "${STUDY_PATH}" ]]; then
@@ -18,4 +18,5 @@ if [[ -z "${STUDY_PATH}" ]]; then
   exit 1
 fi
 
-"${REPO_ROOT}/.venv/bin/python" -m src.search --study "${STUDY_PATH}"
+# "${REPO_ROOT}/.venv/bin/python" -m src.search --study "${STUDY_PATH}"
+python -m src.search --study "${STUDY_PATH}"

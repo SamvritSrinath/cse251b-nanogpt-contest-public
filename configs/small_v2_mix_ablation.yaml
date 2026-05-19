@@ -29,15 +29,15 @@ data:
     - name: fineweb_edu
       path: data/fineweb-edu
       glob: "**/*.bin"
-      weight: 0.75
+      weight: 0.85
     - name: openwebtext
       path: data/openwebtext
       glob: "**/*.bin"
-      weight: 0.15
+      weight: 0.10
     - name: wikimedia
       path: data/wikimedia
       glob: "**/*.bin"
-      weight: 0.09
+      weight: 0.04 
     - name: arxiv_abstracts
       path: data/arxiv-abstracts
       glob: "**/*.bin"
@@ -48,7 +48,7 @@ data:
 
 train:
   max_steps: 1200
-  batch_size: 16
+  batch_size: 8
   grad_accum_steps: 2
   grad_clip: 1.0
   log_interval: 50
