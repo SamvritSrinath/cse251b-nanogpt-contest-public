@@ -24,8 +24,8 @@ from src.utils import (
     TrialMetadata,
     append_experiment_result,
     assert_parameter_budget,
+    compute_warmup_steps,
     cosine_with_warmup,
-    resolve_warmup_steps,
     effective_batch_tokens,
     ensure_directory,
     experiment_config_to_dict,
@@ -165,10 +165,9 @@ def run_training(
 
     optimizer = build_optimizer(model, config.optimizer)
     initial_step = 0
-    resumed = config.train.resume_from is not None
     best_val_ppl = float("inf")
     best_val_loss = float("inf")
-    if resumed:
+    if config.train.resume_from is not None:
         resume_path = Path(config.train.resume_from)
         state = safe_torch_load(resume_path, map_location=device)
         if not isinstance(state, dict) or "model_state_dict" not in state:
@@ -197,38 +196,7 @@ def run_training(
         seed=config.train.seed,
     )
 
-    warmup_steps = resolve_warmup_steps(
-        config.train,
-        initial_step=initial_step,
-        resumed=resumed,
-    )
-    if resumed:
-        if initial_step <= 0:
-            print(
-                "Warning: checkpoint has step=0; LR schedule starts at step 1. "
-                "Save checkpoints with train.py so step is recorded for smooth continuation."
-            )
-        schedule_step = max(initial_step, 1)
-        resume_adamw_lr = cosine_with_warmup(
-            schedule_step,
-            warmup_steps=warmup_steps,
-            total_steps=config.train.max_steps,
-            max_lr=config.optimizer.adamw_lr,
-            min_lr_ratio=config.train.min_lr_ratio,
-        )
-        resume_muon_lr = cosine_with_warmup(
-            schedule_step,
-            warmup_steps=warmup_steps,
-            total_steps=config.train.max_steps,
-            max_lr=config.optimizer.muon_lr,
-            min_lr_ratio=config.train.min_lr_ratio,
-        )
-        set_optimizer_lr(optimizer, adamw_lr=resume_adamw_lr, muon_lr=resume_muon_lr)
-        if warmup_steps == 0 and config.train.warmup_steps not in (None, 0):
-            print(
-                f"Resume LR schedule: warmup disabled (checkpoint step={initial_step}), "
-                f"adamw_lr={resume_adamw_lr:.6g} muon_lr={resume_muon_lr:.6g}"
-            )
+    warmup_steps = compute_warmup_steps(config.train)
     checkpoint_dir = ensure_directory(Path(config.train.checkpoint_dir) / run_id)
     submission_root = ensure_directory(Path(config.train.submission_dir) / run_id)
     # Saving the resolved YAML next to checkpoints makes every trial reproducible on its own.

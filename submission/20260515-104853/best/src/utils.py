@@ -51,7 +51,6 @@ class ArchitectureConfig:
     name: str
     n_layer: int
     d_model: int
-    embedding_dim: int | None
     n_heads: int
     ffn_multiplier: float
     context_len: int
@@ -69,9 +68,6 @@ class ArchitectureConfig:
             name=str(data.get("name", "modern_decoder")),
             n_layer=int(data["n_layer"]),
             d_model=int(data["d_model"]),
-            embedding_dim=None
-            if data.get("embedding_dim") is None
-            else int(data["embedding_dim"]),
             n_heads=int(data["n_heads"]),
             ffn_multiplier=float(data["ffn_multiplier"]),
             context_len=int(data["context_len"]),
@@ -568,24 +564,6 @@ def compute_warmup_steps(train_config: TrainConfig) -> int:
     if train_config.warmup_steps is not None:
         return train_config.warmup_steps
     return max(1, train_config.max_steps // 100)
-
-
-def resolve_warmup_steps(
-    train_config: TrainConfig,
-    *,
-    initial_step: int,
-    resumed: bool,
-) -> int:
-    """Resolve warmup steps for this run, disabling warmup on checkpoint resume.
-
-    Continuation runs load weights that already passed warmup. Re-applying warmup
-    would drop LR below the checkpoint's effective rate and waste steps.
-    """
-
-    warmup_steps = compute_warmup_steps(train_config)
-    if resumed or initial_step > 0:
-        return 0
-    return warmup_steps
 
 
 def resolve_context_length(

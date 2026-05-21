@@ -1,0 +1,70 @@
+name: continue_v3_d1_generalize_30k
+
+architecture:
+  name: modern_decoder
+  n_layer: 16
+  d_model: 640
+  n_heads: 10
+  ffn_multiplier: 2.00
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.0001
+  muon_lr: 0.006
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu
+      path: data/fineweb-edu
+      glob: "**/*.bin"
+      weight: 0.82
+    - name: openwebtext
+      path: data/openwebtext
+      glob: "**/*.bin"
+      weight: 0.10
+    - name: wikimedia
+      path: data/wikimedia
+      glob: "**/*.bin"
+      weight: 0.07
+    - name: arxiv_abstracts
+      path: data/arxiv-abstracts
+      glob: "**/*.bin"
+      weight: 0.01
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests
+
+train:
+  max_steps: 30000
+  batch_size: 16
+  grad_accum_steps: 6
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 500
+  save_interval: 500
+  eval_batch_size: 8
+  eval_batches: null
+  seed: 1338
+  device: cuda
+  compile: true
+  precision: bf16
+  warmup_steps: 500
+  min_lr_ratio: 0.1
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  resume_from: checkpoints/20260519-162353/best.pt
+  context_schedule:
+    name: fixed
+    end_context_len: 1024

@@ -1,0 +1,69 @@
+{
+  "architecture": {
+    "bias": null,
+    "context_len": 1024,
+    "d_model": 576,
+    "dropout": 0.0,
+    "ffn_multiplier": 2.67,
+    "n_heads": 12,
+    "n_layer": 16,
+    "name": "modern_decoder",
+    "rope_base": 10000.0,
+    "vocab_size": 50257,
+    "weight_tying": true
+  },
+  "data": {
+    "data_fraction": "100%",
+    "manifest_dir": "data/manifests",
+    "sources": [
+      {
+        "glob": "**/edufineweb_train_*.bin",
+        "name": "fineweb_edu",
+        "notes": "Primary educational web corpus from HuggingFaceFW/fineweb-edu.",
+        "path": "data/fineweb-edu",
+        "weight": 1.0
+      }
+    ],
+    "val_data_path": "val.bin"
+  },
+  "name": "full",
+  "optimizer": {
+    "adamw_lr": 0.0003,
+    "betas": [
+      0.9,
+      0.95
+    ],
+    "eps": 1e-08,
+    "momentum": 0.95,
+    "muon_lr": 0.02,
+    "muon_ns_steps": 5,
+    "name": "muon_hybrid",
+    "nesterov": true,
+    "weight_decay": 0.1
+  },
+  "train": {
+    "batch_size": 8,
+    "checkpoint_dir": "checkpoints",
+    "compile": false,
+    "context_schedule": {
+      "end_context_len": 1024,
+      "name": "fixed",
+      "ramp_steps": 0,
+      "start_context_len": null,
+      "switch_step": 0
+    },
+    "device": "cuda",
+    "eval_batch_size": 8,
+    "eval_batches": 64,
+    "eval_interval": 500,
+    "grad_accum_steps": 8,
+    "grad_clip": 1.0,
+    "log_interval": 50,
+    "max_steps": 10000,
+    "min_lr_ratio": 0.1,
+    "save_interval": 500,
+    "seed": 1337,
+    "submission_dir": "submission",
+    "warmup_steps": 100
+  }
+}

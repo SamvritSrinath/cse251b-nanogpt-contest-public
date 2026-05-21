@@ -58,7 +58,7 @@ Optionally upload the final shards to GCS:
 
 ## Training VM
 
-Bootstrap the training environment:
+Bootstrap the training environment (no Rust toolchain required):
 
 ```bash
 ./scripts/setup_env.sh train \
@@ -66,6 +66,19 @@ Bootstrap the training environment:
 source .workspace-env.sh
 source .venv/bin/activate
 ```
+
+If you only need the Python workspace and will pull tokenized shards from GCS (no local
+tokenization), skip rustup and `corpus-prep` entirely:
+
+```bash
+./scripts/setup_env.sh data --skip-rust
+# or, for training-only VMs:
+./scripts/setup_env.sh train --skip-rust \
+  --torch-index-url https://download.pytorch.org/whl/cu121
+```
+
+`--skip-rust` implies `--skip-corpus-build` and omits `build-essential` / rustup on the
+data role.
 
 If you already have a mounted disk with `fineweb-edu/` on it, symlink it into the repo:
 

@@ -570,24 +570,6 @@ def compute_warmup_steps(train_config: TrainConfig) -> int:
     return max(1, train_config.max_steps // 100)
 
 
-def resolve_warmup_steps(
-    train_config: TrainConfig,
-    *,
-    initial_step: int,
-    resumed: bool,
-) -> int:
-    """Resolve warmup steps for this run, disabling warmup on checkpoint resume.
-
-    Continuation runs load weights that already passed warmup. Re-applying warmup
-    would drop LR below the checkpoint's effective rate and waste steps.
-    """
-
-    warmup_steps = compute_warmup_steps(train_config)
-    if resumed or initial_step > 0:
-        return 0
-    return warmup_steps
-
-
 def resolve_context_length(
     schedule: ContextScheduleConfig,
     *,
