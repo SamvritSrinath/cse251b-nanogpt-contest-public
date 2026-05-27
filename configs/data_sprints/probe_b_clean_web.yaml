@@ -1,4 +1,4 @@
-name: small_v2_mix_ablation
+name: probe_b_clean_web
 
 architecture:
   name: modern_decoder
@@ -26,28 +26,42 @@ optimizer:
 
 data:
   sources:
-    - name: fineweb_edu
-      path: data/fineweb-edu
+    - name: fineweb_edu_hi
+      path: data/fineweb-edu-hi
       glob: "**/*_train_*.bin"
-      weight: 0.85
-    - name: openwebtext
-      path: data/openwebtext
+      weight: 0.65
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: HuggingFaceFW/fineweb-edu
+        include: "sample/10BT/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: fineweb_edu_hi
+        filter_profile: fineweb_edu_hi
+        split_mode: train-only
+        emit_doc_index: false
+    - name: dclm_clean
+      path: data/dclm-clean
       glob: "**/*_train_*.bin"
-      weight: 0.10
-    - name: wikimedia
-      path: data/wikimedia
-      glob: "**/*_train_*.bin"
-      weight: 0.04 
-    - name: arxiv_abstracts
-      path: data/arxiv-abstracts
-      glob: "**/*_train_*.bin"
-      weight: 0.01
+      weight: 0.35
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: mlfoundations/dclm-baseline-1.0-parquet
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: dclm_clean
+        filter_profile: dclm_clean
+        split_mode: train-only
+        emit_doc_index: false
   val_data_path: val.bin
   data_fraction: 100%
   manifest_dir: data/manifests
 
 train:
-  max_steps: 1200
+  max_steps: 2000
   batch_size: 8
   grad_accum_steps: 2
   grad_clip: 1.0

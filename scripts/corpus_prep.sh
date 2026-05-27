@@ -9,7 +9,7 @@ source "${SCRIPT_DIR}/lib/data.sh"
 data_source_workspace_env "${REPO_ROOT}"
 
 bin="${REPO_ROOT}/tools/corpus-prep/target/release/corpus-prep"
-if [[ ! -x "${bin}" ]]; then
+if [[ ! -x "${bin}" || "${REPO_ROOT}/tools/corpus-prep/src/main.rs" -nt "${bin}" || "${REPO_ROOT}/tools/corpus-prep/Cargo.toml" -nt "${bin}" ]]; then
   data_need_cmd cargo
   (cd "${REPO_ROOT}/tools/corpus-prep" && cargo build --release)
 fi

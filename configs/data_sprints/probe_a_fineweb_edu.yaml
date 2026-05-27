@@ -1,11 +1,11 @@
-name: full_v2
+name: probe_a_fineweb_edu
 
 architecture:
   name: modern_decoder
-  n_layer: 16
-  d_model: 640
-  n_heads: 10
-  ffn_multiplier: 2.00
+  n_layer: 8
+  d_model: 384
+  n_heads: 6
+  ffn_multiplier: 2.67
   context_len: 1024
   vocab_size: 50257
   weight_tying: true
@@ -30,26 +30,34 @@ data:
       path: data/fineweb-edu
       glob: "**/*_train_*.bin"
       weight: 1.0
-      notes: "Primary educational web corpus from HuggingFaceFW/fineweb-edu."
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: HuggingFaceFW/fineweb-edu
+        include: "sample/10BT/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: edufineweb
+        split_mode: train-only
+        emit_doc_index: false
   val_data_path: val.bin
   data_fraction: 100%
   manifest_dir: data/manifests
 
 train:
-  max_steps: 10000
-  batch_size: 24
-  grad_accum_steps: 3
+  max_steps: 2000
+  batch_size: 8
+  grad_accum_steps: 2
   grad_clip: 1.0
   log_interval: 50
-  eval_interval: 500
-  save_interval: 500
-  eval_batch_size: 24
+  eval_interval: 400
+  save_interval: 400
+  eval_batch_size: 8
   eval_batches: 64
   seed: 1337
   device: cuda
   compile: false
-  precision: bf16
-  log_cuda_memory: true
+  precision: fp32
   warmup_steps: 100
   min_lr_ratio: 0.1
   checkpoint_dir: checkpoints

@@ -61,6 +61,23 @@ else
   CFG_PATH="${REPO_ROOT}/${PREP_CONFIG}"
 fi
 
+prep_config_has_native_prepare() {
+  "${PYTHON_BIN}" -c 'import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = yaml.safe_load(handle) or {}
+sources = data.get("data", {}).get("sources", [])
+raise SystemExit(0 if any(source.get("prepare") for source in sources) else 1)' "${CFG_PATH}"
+}
+
+if prep_config_has_native_prepare; then
+  cmd=("${PYTHON_BIN}" "${SCRIPT_DIR}/prepare_sources.py" --config "${CFG_PATH}")
+  if [[ "${PREP_FORCE_LOCAL:-0}" != "0" ]]; then
+    cmd+=(--force-local)
+  fi
+  echo "prep: config-native prepare blocks detected; using prepare_sources.py" >&2
+  exec "${cmd[@]}"
+fi
+
 prep_resolve_source_list() {
   if [[ -n "${PREP_DATA_SOURCES:-}" ]]; then
     echo "prep: using PREP_DATA_SOURCES; ignoring PREP_CONFIG for source discovery" >&2

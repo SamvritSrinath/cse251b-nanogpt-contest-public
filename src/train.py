@@ -6,6 +6,7 @@ import argparse
 import math
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
@@ -169,22 +170,47 @@ def run_training(
     best_val_ppl = float("inf")
     best_val_loss = float("inf")
     if resumed:
+        assert config.train.resume_from is not None
         resume_path = Path(config.train.resume_from)
-        state = safe_torch_load(resume_path, map_location=device)
-        if not isinstance(state, dict) or "model_state_dict" not in state:
-            raise ValueError(
-                f"Expected a training checkpoint at {resume_path} with model_state_dict and "
-                "optimizer_state_dict entries."
-            )
-        model.load_state_dict(state["model_state_dict"])
-        optimizer.load_state_dict(state["optimizer_state_dict"])
-        initial_step = int(state.get("step", 0))
-        resumed_val_ppl = float(state.get("val_ppl", float("inf")))
-        best_val_ppl = resumed_val_ppl
-        if math.isfinite(resumed_val_ppl) and resumed_val_ppl > 0.0:
-            best_val_loss = math.log(resumed_val_ppl)
+        checkpoint_path = resume_path / "checkpoint.pt" if resume_path.is_dir() else resume_path
+        state = safe_torch_load(checkpoint_path, map_location=device)
+        if not isinstance(state, Mapping):
+            raise ValueError(f"Expected a checkpoint mapping at {checkpoint_path}.")
+
+        has_training_model = "model_state_dict" in state
+        has_training_optimizer = "optimizer_state_dict" in state
+        if has_training_model or has_training_optimizer:
+            if not has_training_model or not has_training_optimizer:
+                raise ValueError(
+                    f"Expected training checkpoint at {checkpoint_path} to contain both "
+                    "model_state_dict and optimizer_state_dict."
+                )
+            if "step" not in state:
+                raise ValueError(f"Expected training checkpoint at {checkpoint_path} to record step.")
+            model.load_state_dict(state["model_state_dict"], strict=True)
+            optimizer.load_state_dict(state["optimizer_state_dict"])
+            initial_step = int(state["step"])
+            resumed_val_ppl = float(state.get("val_ppl", float("inf")))
+            best_val_ppl = resumed_val_ppl
+            if math.isfinite(resumed_val_ppl) and resumed_val_ppl > 0.0:
+                best_val_loss = math.log(resumed_val_ppl)
+            resume_kind = "training checkpoint"
+        else:
+            if config.train.resume_initial_step is None:
+                raise ValueError(
+                    "resume_initial_step is required when resuming from a model-only checkpoint."
+                )
+            model.load_state_dict(state, strict=True)
+            initial_step = int(config.train.resume_initial_step)
+            resume_kind = "model-only checkpoint"
+
+        if config.train.resume_initial_val_ppl is not None:
+            best_val_ppl = float(config.train.resume_initial_val_ppl)
+            if not math.isfinite(best_val_ppl) or best_val_ppl <= 0.0:
+                raise ValueError("train.resume_initial_val_ppl must be a positive finite value.")
+            best_val_loss = math.log(best_val_ppl)
         print(
-            f"Resumed checkpoint: path={resume_path} step={initial_step} "
+            f"Resumed {resume_kind}: path={checkpoint_path} step={initial_step} "
             f"best_val_ppl={best_val_ppl:.4f}"
         )
     model = maybe_compile(model, config.train.compile)
@@ -202,24 +228,33 @@ def run_training(
         initial_step=initial_step,
         resumed=resumed,
     )
+
+    def lr_schedule_index(step: int) -> tuple[int, int]:
+        if resumed and config.train.lr_schedule_origin == "resume":
+            return (
+                max(1, step - initial_step),
+                max(1, config.train.max_steps - initial_step),
+            )
+        return max(1, step), config.train.max_steps
+
     if resumed:
         if initial_step <= 0:
             print(
                 "Warning: checkpoint has step=0; LR schedule starts at step 1. "
                 "Save checkpoints with train.py so step is recorded for smooth continuation."
             )
-        schedule_step = max(initial_step, 1)
+        schedule_step, schedule_total = lr_schedule_index(initial_step + 1)
         resume_adamw_lr = cosine_with_warmup(
             schedule_step,
             warmup_steps=warmup_steps,
-            total_steps=config.train.max_steps,
+            total_steps=schedule_total,
             max_lr=config.optimizer.adamw_lr,
             min_lr_ratio=config.train.min_lr_ratio,
         )
         resume_muon_lr = cosine_with_warmup(
             schedule_step,
             warmup_steps=warmup_steps,
-            total_steps=config.train.max_steps,
+            total_steps=schedule_total,
             max_lr=config.optimizer.muon_lr,
             min_lr_ratio=config.train.min_lr_ratio,
         )
@@ -267,17 +302,18 @@ def run_training(
             step=step,
         )
 
+        schedule_step, schedule_total = lr_schedule_index(step)
         current_adamw_lr = cosine_with_warmup(
-            step,
+            schedule_step,
             warmup_steps=warmup_steps,
-            total_steps=config.train.max_steps,
+            total_steps=schedule_total,
             max_lr=config.optimizer.adamw_lr,
             min_lr_ratio=config.train.min_lr_ratio,
         )
         current_muon_lr = cosine_with_warmup(
-            step,
+            schedule_step,
             warmup_steps=warmup_steps,
-            total_steps=config.train.max_steps,
+            total_steps=schedule_total,
             max_lr=config.optimizer.muon_lr,
             min_lr_ratio=config.train.min_lr_ratio,
         )

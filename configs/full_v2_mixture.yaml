@@ -28,27 +28,27 @@ data:
   sources:
     - name: fineweb_edu
       path: data/fineweb-edu
-      glob: '**/*.bin'
+      glob: "**/*_train_*.bin"
       weight: 0.75
       notes: 'Primary educational web corpus from HuggingFaceFW/fineweb-edu.'
     - name: openwebtext
       path: data/openwebtext
-      glob: '**/*.bin'
+      glob: "**/*_train_*.bin"
       weight: 0.15
       notes: 'Template slot for OpenWebText-style general web data.'
     - name: wikimedia
       path: data/wikimedia
-      glob: '**/*.bin'
+      glob: "**/*_train_*.bin"
       weight: 0.09
       notes: 'Template slot for Wikipedia or Wikimedia-derived text.'
     # - name: stackexchange
     #   path: data/stackexchange
-    #   glob: '**/*.bin'
+    #   glob: "**/*_train_*.bin"
     #   weight: 0.03
     #   notes: 'Template slot for StackExchange-style conversational technical data.'
     - name: arxiv_abstracts
       path: data/arxiv-abstracts
-      glob: '**/*.bin'
+      glob: "**/*_train_*.bin"
       weight: 0.01
       notes: 'Template slot for technical/reference abstracts.'
   val_data_path: val.bin

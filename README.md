@@ -157,6 +157,14 @@ Preferred in this repository:
 ```
 
 This prepares the configured corpora and writes GPT-2-tokenized `.bin` shards under `data/`.
+Configs with `data.sources[].prepare` use the config-native pipeline:
+
+```bash
+python scripts/prepare_sources.py --config configs/data_sprints/probe_b_clean_web.yaml --dry-run
+python scripts/prepare_sources.py --config configs/data_sprints/probe_b_clean_web.yaml
+```
+
+Prepared sprint sources emit train-only shards matching `**/*_train_*.bin`; document-aware sources can also emit `<shard>.docs.json` sidecars for `document_window`, `section_window`, and `packed_short_docs` sampling.
 For direct ingestion from Hugging Face parquet snapshots, use `./scripts/ingest_data.sh --help`.
 For workspace/bootstrap guidance and mounted-disk usage, see [docs/gcp_quickstart.md](docs/gcp_quickstart.md).
 For direct access to the Rust tokenizer without remembering the Cargo target path, use `./scripts/corpus_prep.sh --help`.

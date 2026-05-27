@@ -60,11 +60,18 @@ class ArchitectureConfig:
     dropout: float = 0.0
     bias: bool | None = None
     rope_base: float = 10_000.0
+    qk_norm: bool = False
+    residual_init: str = "default"
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ArchitectureConfig":
         """Build an architecture config from a plain mapping."""
 
+        residual_init = str(data.get("residual_init", "default")).lower()
+        if residual_init not in {"default", "scaled"}:
+            raise ValueError(
+                "architecture.residual_init must be 'default' or 'scaled'."
+            )
         return cls(
             name=str(data.get("name", "modern_decoder")),
             n_layer=int(data["n_layer"]),
@@ -80,6 +87,8 @@ class ArchitectureConfig:
             dropout=float(data.get("dropout", 0.0)),
             bias=None if data.get("bias") is None else bool(data["bias"]),
             rope_base=float(data.get("rope_base", 10_000.0)),
+            qk_norm=bool(data.get("qk_norm", False)),
+            residual_init=residual_init,
         )
 
 
@@ -125,17 +134,35 @@ class DataSourceConfig:
     glob: str = "**/*.bin"
     weight: float = 1.0
     notes: str = ""
+    sample_policy: str = "random_window"
+    prepare: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DataSourceConfig":
         """Build a source config from a plain mapping."""
 
+        sample_policy = str(data.get("sample_policy", "random_window"))
+        if sample_policy not in {
+            "random_window",
+            "document_window",
+            "section_window",
+            "packed_short_docs",
+        }:
+            raise ValueError(
+                "data.sources[].sample_policy must be one of: random_window, "
+                "document_window, section_window, packed_short_docs."
+            )
+        prepare = None
+        if data.get("prepare") is not None:
+            prepare = dict(data["prepare"])
         return cls(
             name=str(data["name"]),
             path=str(data["path"]),
             glob=str(data.get("glob", "**/*.bin")),
             weight=float(data.get("weight", 1.0)),
             notes=str(data.get("notes", "")),
+            sample_policy=sample_policy,
+            prepare=prepare,
         )
 
 
@@ -233,6 +260,9 @@ class TrainConfig:
     checkpoint_dir: str = "checkpoints"
     submission_dir: str = "submission"
     resume_from: str | None = None
+    resume_initial_step: int | None = None
+    resume_initial_val_ppl: float | None = None
+    lr_schedule_origin: str = "absolute"
     log_cuda_memory: bool = False
     context_schedule: ContextScheduleConfig = field(default_factory=ContextScheduleConfig)
 
@@ -246,6 +276,9 @@ class TrainConfig:
             raise ValueError(
                 f"Unsupported train.precision '{precision}'. Supported values: fp32, bf16."
             )
+        lr_schedule_origin = str(data.get("lr_schedule_origin", "absolute")).lower()
+        if lr_schedule_origin not in {"absolute", "resume"}:
+            raise ValueError("train.lr_schedule_origin must be 'absolute' or 'resume'.")
         return cls(
             max_steps=int(data["max_steps"]),
             batch_size=int(data["batch_size"]),
@@ -265,6 +298,13 @@ class TrainConfig:
             checkpoint_dir=str(data.get("checkpoint_dir", "checkpoints")),
             submission_dir=str(data.get("submission_dir", "submission")),
             resume_from=None if data.get("resume_from") is None else str(data["resume_from"]),
+            resume_initial_step=None
+            if data.get("resume_initial_step") is None
+            else int(data["resume_initial_step"]),
+            resume_initial_val_ppl=None
+            if data.get("resume_initial_val_ppl") is None
+            else float(data["resume_initial_val_ppl"]),
+            lr_schedule_origin=lr_schedule_origin,
             log_cuda_memory=bool(data.get("log_cuda_memory", False)),
             context_schedule=ContextScheduleConfig.from_dict(data.get("context_schedule")),
         )

@@ -28,19 +28,19 @@ data:
   sources:
     - name: fineweb_edu
       path: data/fineweb-edu
-      glob: "**/*.bin"
+      glob: "**/*_train_*.bin"
       weight: 0.88
     - name: openwebtext
       path: data/openwebtext
-      glob: "**/*.bin"
+      glob: "**/*_train_*.bin"
       weight: 0.08
     - name: wikimedia
       path: data/wikimedia
-      glob: "**/*.bin"
+      glob: "**/*_train_*.bin"
       weight: 0.03
     - name: arxiv_abstracts
       path: data/arxiv-abstracts
-      glob: "**/*.bin"
+      glob: "**/*_train_*.bin"
       weight: 0.01
 
   val_data_path: val.bin
