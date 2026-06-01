@@ -264,6 +264,15 @@ class TrainConfig:
     resume_initial_val_ppl: float | None = None
     lr_schedule_origin: str = "absolute"
     log_cuda_memory: bool = False
+    use_ema: bool = False
+    ema_decay: float = 0.999
+    ema_eval: bool = True
+    ema_device: str = "cuda"
+    use_teacher: bool = False
+    teacher_model_name: str = "openai-community/gpt2-large"
+    teacher_weight: float = 0.0
+    teacher_temperature: float = 2.0
+    teacher_device: str = "cuda"
     context_schedule: ContextScheduleConfig = field(default_factory=ContextScheduleConfig)
 
     @classmethod
@@ -279,6 +288,21 @@ class TrainConfig:
         lr_schedule_origin = str(data.get("lr_schedule_origin", "absolute")).lower()
         if lr_schedule_origin not in {"absolute", "resume"}:
             raise ValueError("train.lr_schedule_origin must be 'absolute' or 'resume'.")
+        ema_device = str(data.get("ema_device", "cuda")).lower()
+        if ema_device not in {"cuda", "cpu"}:
+            raise ValueError("train.ema_device must be 'cuda' or 'cpu'.")
+        ema_decay = float(data.get("ema_decay", 0.999))
+        if not 0.0 <= ema_decay < 1.0:
+            raise ValueError("train.ema_decay must satisfy 0.0 <= ema_decay < 1.0.")
+        teacher_device = str(data.get("teacher_device", "cuda")).lower()
+        if teacher_device not in {"cuda", "cpu"}:
+            raise ValueError("train.teacher_device must be 'cuda' or 'cpu'.")
+        teacher_weight = float(data.get("teacher_weight", 0.0))
+        if not 0.0 <= teacher_weight <= 1.0:
+            raise ValueError("train.teacher_weight must satisfy 0.0 <= teacher_weight <= 1.0.")
+        teacher_temperature = float(data.get("teacher_temperature", 2.0))
+        if teacher_temperature <= 0.0:
+            raise ValueError("train.teacher_temperature must be positive.")
         return cls(
             max_steps=int(data["max_steps"]),
             batch_size=int(data["batch_size"]),
@@ -306,6 +330,15 @@ class TrainConfig:
             else float(data["resume_initial_val_ppl"]),
             lr_schedule_origin=lr_schedule_origin,
             log_cuda_memory=bool(data.get("log_cuda_memory", False)),
+            use_ema=bool(data.get("use_ema", False)),
+            ema_decay=ema_decay,
+            ema_eval=bool(data.get("ema_eval", True)),
+            ema_device=ema_device,
+            use_teacher=bool(data.get("use_teacher", False)),
+            teacher_model_name=str(data.get("teacher_model_name", "openai-community/gpt2-large")),
+            teacher_weight=teacher_weight,
+            teacher_temperature=teacher_temperature,
+            teacher_device=teacher_device,
             context_schedule=ContextScheduleConfig.from_dict(data.get("context_schedule")),
         )
 
@@ -622,10 +655,12 @@ def resolve_warmup_steps(
     would drop LR below the checkpoint's effective rate and waste steps.
     """
 
-    warmup_steps = compute_warmup_steps(train_config)
+    if resumed and train_config.lr_schedule_origin == "resume":
+        return compute_warmup_steps(train_config)
+
     if resumed or initial_step > 0:
         return 0
-    return warmup_steps
+    return compute_warmup_steps(train_config)
 
 
 def resolve_context_length(
@@ -742,22 +777,26 @@ def save_training_checkpoint(
     config: ExperimentConfig,
     step: int,
     val_ppl: float,
+    ema_model: torch.nn.Module | None = None,
+    ema_val_ppl: float | None = None,
 ) -> None:
     """Save a wrapped training checkpoint with optimizer state and config."""
 
     ensure_parent_dir(path)
     checkpoint_dir = Path(path).parent
     save_json(checkpoint_dir / "config.json", experiment_config_to_dict(config))
-    torch.save(
-        {
-            "step": step,
-            "model_state_dict": unwrap_model(model).state_dict(),
-            "optimizer_state_dict": optimizer_state,
-            "config": experiment_config_to_dict(config),
-            "val_ppl": val_ppl,
-        },
-        path,
-    )
+    payload: dict[str, Any] = {
+        "step": step,
+        "model_state_dict": unwrap_model(model).state_dict(),
+        "optimizer_state_dict": optimizer_state,
+        "config": experiment_config_to_dict(config),
+        "val_ppl": val_ppl,
+    }
+    if ema_model is not None:
+        payload["ema_model_state_dict"] = unwrap_model(ema_model).state_dict()
+        if ema_val_ppl is not None:
+            payload["ema_val_ppl"] = ema_val_ppl
+    torch.save(payload, path)
 
 
 def export_submission_bundle(

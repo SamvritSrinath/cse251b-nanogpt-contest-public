@@ -188,6 +188,47 @@ python evaluate.py --model_dir /path/to/your/model/ --data val.bin
 python evaluate.py --hf_repo your-username/cse251b-group-XX --data val.bin
 ```
 
+### EMA and Checkpoint Averaging
+
+EMA is opt-in and exports separate bundles so the raw submission path is never replaced silently:
+
+```yaml
+train:
+  use_ema: true
+  ema_decay: 0.999
+  ema_eval: true
+  ema_device: cuda
+```
+
+GPT-2 Large teacher distillation is also opt-in. It is disabled by default and never changes the exported model parameter count:
+
+```yaml
+train:
+  use_teacher: true
+  teacher_model_name: openai-community/gpt2-large
+  teacher_weight: 0.1
+  teacher_temperature: 2.0
+  teacher_device: cuda
+```
+
+```bash
+PYTHONPATH=. python -m src.train --config configs/endgame/v21resolved.yaml --notes "ema raw+explicit-ema export"
+```
+
+Evaluate raw, EMA, and averaged checkpoints explicitly:
+
+```bash
+RUN_ID=20260529-123456
+python scripts/average_checkpoints.py --glob "checkpoints/${RUN_ID}/ckpt_step*.pt" --last 5 --out "submission/${RUN_ID}/avg_last5"
+python scripts/average_checkpoints.py --glob "checkpoints/${RUN_ID}/ckpt_step*.pt" --last 5 --state-key ema_model_state_dict --out "submission/${RUN_ID}/avg_last5_ema"
+python evaluate.py --model_dir "submission/${RUN_ID}/best" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+python evaluate.py --model_dir "submission/${RUN_ID}/best_ema" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+python evaluate.py --model_dir "submission/${RUN_ID}/avg_last5" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+python evaluate.py --model_dir "submission/${RUN_ID}/avg_last5_ema" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+```
+
+Only average checkpoints from the same run and training stage. The averaging script refuses mixed directories or mismatched configs.
+
 ### 6. Iterate!
 
 The fun part. Some directions to explore (non-exhaustive):

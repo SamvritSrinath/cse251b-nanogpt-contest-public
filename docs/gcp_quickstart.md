@@ -99,3 +99,45 @@ Then run a smoke test:
 - `./scripts/ingest_data.sh --dry-run ...` is the clean way to inspect a future HF dataset before pulling it for real.
 - The setup script writes `.workspace-env.sh` so mutable caches and tool homes can live on the mounted disk.
 - The helper scripts assume Debian/Ubuntu-style images with `apt-get`.
+
+## 400 GB Boot-Disk-Only Workflow
+
+Use this when you do not have a persistent disk. Keep Hugging Face caches under the home directory, process one source at a time, and delete raw/cache material after every successful source.
+
+```bash
+export HF_HOME="$HOME/hf-cache"
+export HF_HUB_ENABLE_HF_TRANSFER=1
+df -h /
+du -sh data checkpoints submission "$HF_HOME" 2>/dev/null || true
+```
+
+Prepare one configured source at a time:
+
+```bash
+python scripts/prepare_sources.py \
+  --config configs/endgame/full_v19_dclm_commonpile_boot400.yaml \
+  --source fineweb_edu_hi
+
+rm -rf "$HF_HOME"
+df -h /
+du -sh data checkpoints submission "$HOME/hf-cache" 2>/dev/null || true
+```
+
+Repeat for the next source. If `GCS_DATA_ROOT=gs://bucket/prefix` is set, `prepare_sources.py` first tries to pull already-tokenized shards before doing local prep. Upload final tokenized source directories to GCS when available:
+
+```bash
+gcloud storage cp --recursive data/fineweb-edu-hi "$GCS_DATA_ROOT/data/"
+```
+
+For direct single-source ingest, require free space up front and emit train-only shards:
+
+```bash
+./scripts/ingest_data.sh \
+  --hf-dataset HuggingFaceFW/fineweb-edu \
+  --include "sample/10BT/*.parquet" \
+  --source-name fineweb-edu-hi \
+  --split-mode train-only \
+  --min-free-gb 80
+```
+
+Avoid trying to fully materialize large DCLM, Dolma, RedPajama, S2ORC, or similar full snapshots on a 400 GB boot disk. Use filtered subsets, `max_parquet_files`, `max_docs`, `max_bytes`, `max_temp_gb`, and GCS reuse instead.

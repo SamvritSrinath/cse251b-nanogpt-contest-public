@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import math
 import sys
 import time
@@ -45,6 +46,7 @@ from src.utils import (
     save_yaml,
     set_optimizer_lr,
     set_seed,
+    unwrap_model,
 )
 
 
@@ -123,6 +125,88 @@ def maybe_compile(model: torch.nn.Module, enabled: bool) -> torch.nn.Module:
     return torch.compile(model)
 
 
+def create_ema_model(model: torch.nn.Module, *, device: str) -> torch.nn.Module:
+    """Create a frozen eval-mode EMA copy from the unwrapped model."""
+
+    ema_model = copy.deepcopy(unwrap_model(model)).to(device)
+    ema_model.eval()
+    for parameter in ema_model.parameters():
+        parameter.requires_grad_(False)
+    return ema_model
+
+
+@torch.no_grad()
+def update_ema_model(
+    ema_model: torch.nn.Module,
+    model: torch.nn.Module,
+    *,
+    decay: float,
+) -> None:
+    """Update EMA parameters and copy non-floating state from the current model."""
+
+    current_state = unwrap_model(model).state_dict()
+    for name, ema_value in ema_model.state_dict().items():
+        current_value = current_state[name].detach().to(device=ema_value.device)
+        if torch.is_floating_point(ema_value):
+            ema_value.mul_(decay).add_(current_value.to(dtype=ema_value.dtype), alpha=1.0 - decay)
+        else:
+            ema_value.copy_(current_value)
+
+
+def load_teacher_model(
+    *,
+    model_name: str,
+    device: str,
+    use_bf16: bool,
+) -> torch.nn.Module:
+    """Load a frozen GPT-2-family teacher model for optional distillation."""
+
+    try:
+        from transformers import AutoModelForCausalLM  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ImportError(
+            "train.use_teacher=true requires transformers. Install dependencies from "
+            "requirements.txt before enabling teacher distillation."
+        ) from exc
+
+    dtype = torch.bfloat16 if use_bf16 and device.startswith("cuda") else torch.float32
+    teacher = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype)
+    teacher.to(device)
+    teacher.eval()
+    for parameter in teacher.parameters():
+        parameter.requires_grad_(False)
+    vocab_size = int(getattr(getattr(teacher, "config", object()), "vocab_size", 0))
+    if vocab_size != 50257:
+        raise ValueError(
+            f"Teacher model {model_name} has vocab_size={vocab_size}; "
+            "GPT-2-token distillation requires vocab_size=50257."
+        )
+    return teacher
+
+
+def distillation_kl_loss(
+    student_logits: torch.Tensor,
+    teacher_logits: torch.Tensor,
+    *,
+    temperature: float,
+) -> torch.Tensor:
+    """Compute token-mean KL loss from teacher probabilities to student logits."""
+
+    if teacher_logits.shape != student_logits.shape:
+        raise ValueError(
+            f"Teacher logits shape {tuple(teacher_logits.shape)} does not match "
+            f"student logits shape {tuple(student_logits.shape)}."
+        )
+    student_log_probs = F.log_softmax(student_logits.float() / temperature, dim=-1)
+    teacher_probs = F.softmax(teacher_logits.float() / temperature, dim=-1)
+    token_count = max(1, student_logits.shape[0] * student_logits.shape[1])
+    return (
+        F.kl_div(student_log_probs, teacher_probs, reduction="sum")
+        * (temperature * temperature)
+        / token_count
+    )
+
+
 def log_cuda_memory_stats(label: str) -> None:
     """Print a short CUDA memory snapshot when instrumentation is enabled."""
 
@@ -169,6 +253,8 @@ def run_training(
     resumed = config.train.resume_from is not None
     best_val_ppl = float("inf")
     best_val_loss = float("inf")
+    best_ema_val_ppl = float("inf")
+    best_ema_val_loss = float("inf")
     if resumed:
         assert config.train.resume_from is not None
         resume_path = Path(config.train.resume_from)
@@ -214,6 +300,39 @@ def run_training(
             f"best_val_ppl={best_val_ppl:.4f}"
         )
     model = maybe_compile(model, config.train.compile)
+    ema_device = resolve_device(config.train.ema_device)
+    ema_model: torch.nn.Module | None = None
+    if config.train.use_ema:
+        ema_model = create_ema_model(model, device=ema_device)
+        if resumed and "ema_model_state_dict" in state:
+            ema_model.load_state_dict(state["ema_model_state_dict"], strict=True)
+        print(
+            "EMA enabled: "
+            f"decay={config.train.ema_decay:g} "
+            f"device={ema_device} "
+            f"eval={'on' if config.train.ema_eval else 'off'}"
+        )
+    teacher_device = resolve_device(config.train.teacher_device)
+    teacher_model: torch.nn.Module | None = None
+    if config.train.use_teacher:
+        if config.train.teacher_weight <= 0.0:
+            print(
+                "Teacher distillation configured but inactive: "
+                "train.teacher_weight is 0.0."
+            )
+        else:
+            teacher_model = load_teacher_model(
+                model_name=config.train.teacher_model_name,
+                device=teacher_device,
+                use_bf16=use_bf16,
+            )
+            print(
+                "Teacher distillation enabled: "
+                f"model={config.train.teacher_model_name} "
+                f"weight={config.train.teacher_weight:g} "
+                f"temperature={config.train.teacher_temperature:g} "
+                f"device={teacher_device}"
+            )
 
     manifests = load_source_manifests(config.data)
     print(f"Data sources: {summarize_manifests(manifests)}")
@@ -281,6 +400,7 @@ def run_training(
             f"{config.train.max_steps}."
         )
     best_submission_dir: Path | None = None
+    best_ema_submission_dir: Path | None = None
     tokens_since_log = 0
     python_last_log_time = time.time()
     logged_first_step_memory = False
@@ -296,6 +416,8 @@ def run_training(
     for step in range(initial_step + 1, config.train.max_steps + 1):
         optimizer.zero_grad(set_to_none=True)
         train_loss = 0.0
+        train_ce_loss = 0.0
+        train_teacher_loss = 0.0
         train_context_len = resolve_context_length(
             config.train.context_schedule,
             max_context_len=config.architecture.context_len,
@@ -329,17 +451,36 @@ def run_training(
                 enabled=use_bf16,
             ):
                 logits = model(inputs)
-                loss = F.cross_entropy(
+                ce_loss = F.cross_entropy(
                     logits.reshape(-1, logits.size(-1)),
                     targets.reshape(-1),
                 )
+                loss = ce_loss
+                if teacher_model is not None:
+                    teacher_inputs = inputs if teacher_device == device else inputs.to(teacher_device)
+                    with torch.no_grad():
+                        teacher_outputs = teacher_model(teacher_inputs)
+                        teacher_logits = teacher_outputs.logits.to(device=logits.device)
+                    teacher_loss = distillation_kl_loss(
+                        logits,
+                        teacher_logits,
+                        temperature=config.train.teacher_temperature,
+                    )
+                    loss = (
+                        (1.0 - config.train.teacher_weight) * ce_loss
+                        + config.train.teacher_weight * teacher_loss
+                    )
+                    train_teacher_loss += teacher_loss.item()
             train_loss += loss.item()
+            train_ce_loss += ce_loss.item()
             (loss / config.train.grad_accum_steps).backward()
             tokens_since_log += inputs.numel()
 
         if config.train.grad_clip > 0.0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.train.grad_clip)
         optimizer.step()
+        if ema_model is not None:
+            update_ema_model(ema_model, model, decay=config.train.ema_decay)
         if config.train.log_cuda_memory and device_is_cuda and not logged_first_step_memory:
             log_cuda_memory_stats("after_first_step")
             logged_first_step_memory = True
@@ -349,13 +490,19 @@ def run_training(
             elapsed = max(1e-6, now - python_last_log_time)
             tokens_per_second = format_tokens_per_second(tokens_since_log, elapsed)
             train_loss /= config.train.grad_accum_steps
-            print(
+            log_parts = [
                 f"step={step:06d} "
                 f"train_loss={train_loss:.4f} "
                 f"tokens_per_second={tokens_per_second:.1f} "
                 f"lr={max(current_adamw_lr, current_muon_lr):.6g} "
-                f"train_context_len={train_context_len}"
-            )
+                f"train_context_len={train_context_len}",
+            ]
+            if teacher_model is not None:
+                log_parts.append(
+                    f"ce_loss={train_ce_loss / config.train.grad_accum_steps:.4f} "
+                    f"teacher_kl={train_teacher_loss / config.train.grad_accum_steps:.4f}"
+                )
+            print(" ".join(log_parts))
             python_last_log_time = now
             tokens_since_log = 0
 
@@ -378,6 +525,26 @@ def run_training(
                 f"val_loss={val_loss:.4f} "
                 f"val_ppl={val_ppl:.4f}"
             )
+            ema_val_loss: float | None = None
+            ema_val_ppl: float | None = None
+            if ema_model is not None and config.train.ema_eval:
+                ema_val_loss, ema_val_ppl = evaluate_validation_loss(
+                    ema_model,
+                    data_path=config.data.val_data_path,
+                    context_len=config.architecture.context_len,
+                    batch_size=config.train.eval_batch_size,
+                    device=ema_device,
+                    max_batches=config.train.eval_batches,
+                    autocast_enabled=False,
+                    autocast_device_type="cuda" if ema_device.startswith("cuda") else "cpu",
+                )
+                print(
+                    f"step={step:06d} "
+                    f"ema_val_loss={ema_val_loss:.4f} "
+                    f"ema_val_ppl={ema_val_ppl:.4f}"
+                )
+        else:
+            ema_val_ppl = None
 
         should_save = (
             step % config.train.save_interval == 0
@@ -393,6 +560,8 @@ def run_training(
                 config=config,
                 step=step,
                 val_ppl=val_ppl,
+                ema_model=ema_model,
+                ema_val_ppl=ema_val_ppl,
             )
             step_checkpoint = checkpoint_dir / f"ckpt_step{step:07d}.pt"
             save_training_checkpoint(
@@ -402,6 +571,8 @@ def run_training(
                 config=config,
                 step=step,
                 val_ppl=val_ppl,
+                ema_model=ema_model,
+                ema_val_ppl=ema_val_ppl,
             )
 
         if should_eval and val_ppl < best_val_ppl:
@@ -414,9 +585,37 @@ def run_training(
                 config=config,
                 step=step,
                 val_ppl=val_ppl,
+                ema_model=ema_model,
+                ema_val_ppl=ema_val_ppl,
             )
             best_submission_dir = submission_root / "best"
             export_submission_bundle(model, config, best_submission_dir)
+
+        if (
+            should_eval
+            and ema_model is not None
+            and ema_val_ppl is not None
+            and ema_val_loss is not None
+            and ema_val_ppl < best_ema_val_ppl
+        ):
+            best_ema_val_ppl = ema_val_ppl
+            best_ema_val_loss = ema_val_loss
+            save_training_checkpoint(
+                checkpoint_dir / "best_ema.pt",
+                model=model,
+                optimizer_state=optimizer.state_dict(),
+                config=config,
+                step=step,
+                val_ppl=val_ppl,
+                ema_model=ema_model,
+                ema_val_ppl=ema_val_ppl,
+            )
+            best_ema_submission_dir = submission_root / "best_ema"
+            export_submission_bundle(ema_model, config, best_ema_submission_dir)
+            print(
+                f"EMA best submission bundle saved to: {best_ema_submission_dir} "
+                f"ema_val_ppl={best_ema_val_ppl:.4f}"
+            )
 
         if should_eval and metric_callback is not None:
             metric_callback(
@@ -431,6 +630,11 @@ def run_training(
 
     final_submission_dir = submission_root / "final"
     export_submission_bundle(model, config, final_submission_dir)
+    ema_final_submission_dir: Path | None = None
+    if ema_model is not None:
+        ema_final_submission_dir = submission_root / "final_ema"
+        export_submission_bundle(ema_model, config, ema_final_submission_dir)
+        print(f"EMA final submission bundle saved to: {ema_final_submission_dir}")
 
     summary = TrainingSummary(
         run_id=run_id,
@@ -461,7 +665,14 @@ def run_training(
     print(f"Checkpoints saved to: {checkpoint_dir}")
     if best_submission_dir is not None:
         print(f"Best submission bundle saved to: {best_submission_dir}")
+    if best_ema_submission_dir is not None:
+        print(
+            f"Best EMA validation perplexity: {best_ema_val_ppl:.4f} "
+            f"bundle={best_ema_submission_dir}"
+        )
     print(f"Final submission bundle saved to: {final_submission_dir}")
+    if ema_model is not None:
+        print("EMA export enabled: raw bundles were preserved and EMA bundles were exported separately.")
     return summary
 
 

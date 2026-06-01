@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,17 +71,61 @@ class DataManifestTests(unittest.TestCase):
             self.assertEqual(len(second.shards), 2)
             self.assertEqual(sum(shard.num_tokens for shard in second.shards), 28)
 
+    def test_stale_manifest_rebuilds_when_sidecar_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            self.write_tokens(root / "val.bin", 8)
+            shard = source_dir / "tiny_train_000000.bin"
+            self.write_tokens(shard, 16)
+            sidecar = Path(f"{shard}.docs.json")
+            sidecar.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "shard": shard.name,
+                        "source": "tiny",
+                        "token_count": 16,
+                        "ranges": [{"doc_id": "a", "start": 0, "end": 16}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = self.data_config(root, source_dir)
+
+            first = load_source_manifests(config, rebuild=True)[0]
+            self.assertEqual(first.shards[0].doc_index_size_bytes, sidecar.stat().st_size)
+
+            time.sleep(0.01)
+            sidecar.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "shard": shard.name,
+                        "source": "tiny",
+                        "token_count": 16,
+                        "ranges": [{"doc_id": "b", "start": 0, "end": 16}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            second = load_source_manifests(config)[0]
+            self.assertEqual(second.shards[0].doc_index_size_bytes, sidecar.stat().st_size)
+            self.assertNotEqual(first.shards[0].doc_index_mtime_ns, second.shards[0].doc_index_mtime_ns)
+
 
 class SamplerPolicyTests(unittest.TestCase):
     def write_sidecar(self, shard: Path, ranges: list[dict[str, object]]) -> Path:
         sidecar = Path(f"{shard}.docs.json")
+        token_count = shard.stat().st_size // np.dtype(np.uint16).itemsize
         sidecar.write_text(
             json.dumps(
                 {
                     "version": 1,
                     "shard": shard.name,
                     "source": "tiny",
-                    "token_count": 50,
+                    "token_count": token_count,
                     "ranges": ranges,
                 }
             ),
@@ -90,6 +135,7 @@ class SamplerPolicyTests(unittest.TestCase):
 
     def make_manifest(self, shard: Path, policy: str, sidecar: Path | None) -> SourceManifest:
         stat = shard.stat()
+        num_tokens = stat.st_size // np.dtype(np.uint16).itemsize
         return SourceManifest(
             source_name="tiny",
             source_path=str(shard.parent),
@@ -100,7 +146,7 @@ class SamplerPolicyTests(unittest.TestCase):
             shards=[
                 ShardInfo(
                     path=str(shard),
-                    num_tokens=50,
+                    num_tokens=num_tokens,
                     size_bytes=stat.st_size,
                     mtime_ns=stat.st_mtime_ns,
                     doc_index_path=None if sidecar is None else str(sidecar),
@@ -166,7 +212,44 @@ class SamplerPolicyTests(unittest.TestCase):
             x, y = packed_sampler.next_batch("cpu", context_len=12)
             self.assertEqual(tuple(x.shape), (4, 12))
             self.assertEqual(tuple(y.shape), (4, 12))
-            self.assertTrue(np.all((0 <= x.numpy()) & (x.numpy() < 50)))
+            self.assertTrue(np.all((0 <= x.numpy()) & ((x.numpy() < 50) | (x.numpy() == 50256))))
+
+    def test_document_window_works_for_commonpile_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shard = root / "commonpile_wikimedia_train_000000.bin"
+            np.arange(64, dtype=np.uint16).tofile(shard)
+            ranges = [
+                {"doc_id": "wiki-a", "source": "commonpile_wikimedia", "start": 0, "end": 32},
+                {"doc_id": "wiki-b", "source": "commonpile_wikimedia", "start": 32, "end": 64},
+            ]
+            sidecar = self.write_sidecar(shard, ranges)
+            sampler = WeightedShardSampler(
+                [self.make_manifest(shard, "document_window", sidecar)],
+                batch_size=8,
+                seed=5,
+            )
+
+            x, y = sampler.next_batch("cpu", context_len=8)
+
+            self.assertEqual(tuple(x.shape), (8, 8))
+            for row_x, row_y in zip(x.numpy(), y.numpy()):
+                self.assertTrue(np.array_equal(row_x[1:], row_y[:-1]))
+                self.assert_window_inside(int(row_x[0]), 9, ranges)
+
+    def test_packed_short_docs_requires_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shard = root / "tiny_train_000000.bin"
+            np.arange(32, dtype=np.uint16).tofile(shard)
+            sampler = WeightedShardSampler(
+                [self.make_manifest(shard, "packed_short_docs", None)],
+                batch_size=2,
+                seed=6,
+            )
+
+            with self.assertRaisesRegex(FileNotFoundError, "emit_doc_index: true"):
+                sampler.next_batch("cpu", context_len=8)
 
 
 if __name__ == "__main__":

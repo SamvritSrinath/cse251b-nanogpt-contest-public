@@ -242,3 +242,9 @@ __marimo__/
 # complete AI Output
 repopack-output.txt
 .repopackignore
+
+.cargo/
+.hf/
+.rustup/
+tests/
+submission/

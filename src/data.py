@@ -21,6 +21,8 @@ import torch
 
 from src.utils import DataConfig, DataSourceConfig, absolutize_from_cwd, ensure_directory, load_experiment_config
 
+GPT2_EOT = 50256
+
 
 @dataclass(slots=True)
 class ShardInfo:
@@ -31,6 +33,8 @@ class ShardInfo:
     size_bytes: int
     mtime_ns: int
     doc_index_path: str | None = None
+    doc_index_size_bytes: int | None = None
+    doc_index_mtime_ns: int | None = None
 
 
 @dataclass(slots=True)
@@ -105,12 +109,15 @@ def shard_info_from_path(path: Path) -> ShardInfo:
 
     stat = path.stat()
     doc_index = doc_index_path_for_shard(path)
+    doc_stat = doc_index.stat() if doc_index.is_file() else None
     return ShardInfo(
         path=str(path.resolve()),
         num_tokens=stat.st_size // np.dtype(np.uint16).itemsize,
         size_bytes=stat.st_size,
         mtime_ns=stat.st_mtime_ns,
         doc_index_path=str(doc_index.resolve()) if doc_index.is_file() else None,
+        doc_index_size_bytes=None if doc_stat is None else doc_stat.st_size,
+        doc_index_mtime_ns=None if doc_stat is None else doc_stat.st_mtime_ns,
     )
 
 
@@ -140,12 +147,16 @@ def shard_from_payload(payload: dict[str, object]) -> ShardInfo:
     mtime_ns = int(payload.get("mtime_ns", 0))
     raw_doc_index_path = payload.get("doc_index_path")
     doc_index_path = None if raw_doc_index_path is None else str(raw_doc_index_path)
+    raw_doc_index_size_bytes = payload.get("doc_index_size_bytes")
+    raw_doc_index_mtime_ns = payload.get("doc_index_mtime_ns")
     return ShardInfo(
         path=path,
         num_tokens=num_tokens,
         size_bytes=size_bytes,
         mtime_ns=mtime_ns,
         doc_index_path=doc_index_path,
+        doc_index_size_bytes=None if raw_doc_index_size_bytes is None else int(raw_doc_index_size_bytes),
+        doc_index_mtime_ns=None if raw_doc_index_mtime_ns is None else int(raw_doc_index_mtime_ns),
     )
 
 
@@ -184,11 +195,27 @@ def manifest_matches_source(
 
     current = discover_source_shards(source, val_path=val_path)
     cached_fingerprint = [
-        (shard.path, shard.num_tokens, shard.size_bytes, shard.mtime_ns, shard.doc_index_path)
+        (
+            shard.path,
+            shard.num_tokens,
+            shard.size_bytes,
+            shard.mtime_ns,
+            shard.doc_index_path,
+            shard.doc_index_size_bytes,
+            shard.doc_index_mtime_ns,
+        )
         for shard in manifest.shards
     ]
     current_fingerprint = [
-        (shard.path, shard.num_tokens, shard.size_bytes, shard.mtime_ns, shard.doc_index_path)
+        (
+            shard.path,
+            shard.num_tokens,
+            shard.size_bytes,
+            shard.mtime_ns,
+            shard.doc_index_path,
+            shard.doc_index_size_bytes,
+            shard.doc_index_mtime_ns,
+        )
         for shard in current
     ]
     return cached_fingerprint == current_fingerprint
@@ -360,6 +387,13 @@ class WeightedShardSampler:
         min_tokens = context_len + 1
         eligible = []
         for shard in manifest.shards:
+            if shard.doc_index_path is None:
+                expected = doc_index_path_for_shard(Path(shard.path))
+                raise FileNotFoundError(
+                    f"sample_policy={policy} for source '{manifest.source_name}' requires "
+                    f"a document sidecar for every shard. Missing {expected}. "
+                    "Prepare this source with emit_doc_index: true."
+                )
             ranges = self._load_doc_ranges(shard)
             if policy == "section_window":
                 section_ranges = [item for item in ranges if item.section]
@@ -452,16 +486,19 @@ class WeightedShardSampler:
             pieces: list[np.ndarray] = []
             total = 0
             while total < needed:
+                if pieces and total < needed:
+                    pieces.append(np.asarray([GPT2_EOT], dtype=np.uint16))
+                    total += 1
+                    if total >= needed:
+                        break
                 shard_index = int(self._rng.choice(len(eligible), p=shard_probs))
                 shard, ranges, _ = eligible[shard_index]
                 range_probs = self._normalize_lengths([item.length for item in ranges])
                 range_index = int(self._rng.choice(len(ranges), p=range_probs))
                 token_range = ranges[range_index]
                 take = min(needed - total, token_range.length)
-                max_start = token_range.end - take
-                start = int(self._rng.integers(token_range.start, max_start + 1, endpoint=False))
                 tokens = self._get_tokens(shard.path)
-                piece = np.asarray(tokens[start : start + take], dtype=np.uint16)
+                piece = np.asarray(tokens[token_range.start : token_range.start + take], dtype=np.uint16)
                 pieces.append(piece)
                 total += len(piece)
             packed.append(np.concatenate(pieces)[:needed])

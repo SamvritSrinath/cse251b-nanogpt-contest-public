@@ -48,12 +48,16 @@ If `GCS_DATA_ROOT=gs://bucket/prefix` is set, `prepare_sources.py` first checks 
 Available filter profiles are:
 
 - `fineweb_edu_hi`: keeps high-scoring English FineWeb-Edu rows.
+- `dclm_edu_hi`: keeps high-scoring English rows from `HuggingFaceTB/dclm-edu`.
 - `dclm_clean`: keeps English DCLM parquet rows with basic length and optional quality thresholds.
 - `pg19_books`: strips Project Gutenberg boilerplate and normalizes book rows.
 - `s2orc_sections`: emits section-level rows and requires section metadata unless using nested `body_text`.
 - `openwebmath`: keeps non-trivial math documents.
+- `finerweb_line_quality`: keeps rows whose mean `line_quality` clears the threshold, or rewrites rows with low-quality lines removed when requested.
+- `conservative_v1`: opt-in heuristic cleanup that drops only extremely short documents, very low alphanumeric text, obvious cookie/JavaScript boilerplate, repeated-line spam, and repeated-ngram spam.
 
 Filtered parquet rows are normalized to `text`, `doc_id`, `title`, `source`, and optional `section`.
+`filter_parquet.py` prints kept rows and the top drop reasons. No heuristic filter is applied unless a source explicitly sets `prepare.filter_profile`.
 
 ## Why `.bin` instead of `.npy`
 
@@ -71,6 +75,29 @@ For fresh GCP VMs, use the quick-start helpers in [`docs/gcp_quickstart.md`](./g
 2. bootstrap a `data` or `train` environment with `./scripts/setup_env.sh`,
 3. materialize FineWeb-Edu or another parquet-backed HF dataset with `./scripts/ingest_data.sh` when preparing a data VM.
 
+### 400 GB boot disk notes
+
+For a boot-disk-only VM, set:
+
+```bash
+export HF_HOME="$HOME/hf-cache"
+export HF_HUB_ENABLE_HF_TRANSFER=1
+```
+
+Then process one source at a time with `python scripts/prepare_sources.py --config <yaml> --source <name>`. The prep script skips sources that already have tokenized train shards, tries `GCS_DATA_ROOT` first when set, deletes generated raw/filter/temp parquet caches after each source unless `keep_raw_parquet: true`, and hard-fails if a source output contains `*_val_*.bin`.
+
+Monitor space between sources:
+
+```bash
+df -h /
+du -sh data checkpoints submission "$HOME/hf-cache" 2>/dev/null || true
+rm -rf "$HOME/hf-cache"
+```
+
+Keep final training data as raw `uint16` `*_train_*.bin` shards plus optional `<shard>.bin.docs.json` sidecars. Do not train on `val.bin` or `*_val_*.bin`; configs intended for boot-disk prep use `**/*_train_*.bin` globs.
+
+Do not attempt full DCLM, Dolma, RedPajama, or S2ORC snapshot materialization on a 400 GB boot disk. Use filtered profiles, Common-Pile streaming JSON presets, per-source `max_docs`, `max_bytes`, `max_temp_gb`, and upload/reuse tokenized shards from GCS.
+
 ## How the training loader uses the data
 
 - Training sources are declared explicitly in each experiment config under `data.sources`.
@@ -81,7 +108,28 @@ For fresh GCP VMs, use the quick-start helpers in [`docs/gcp_quickstart.md`](./g
   1. a source by configured mixture weight,
   2. a shard within that source proportional to shard token count,
   3. a random overlapping training window from that shard.
-- Document-aware policies use `<shard>.docs.json` sidecars emitted by `corpus-prep --emit-doc-index`. `document_window` and `section_window` never cross a selected range. `packed_short_docs` can combine short document ranges to fill one example.
+- Document-aware policies use `<shard>.bin.docs.json` sidecars emitted by `corpus-prep --emit-doc-index`. `document_window` and `section_window` never cross a selected range. `packed_short_docs` can combine short document ranges to fill one example.
+- `packed_short_docs` requires every matched `*.bin` shard to have a `<shard>.bin.docs.json` sidecar. Missing sidecars are a hard error; prepare those sources with `emit_doc_index: true` and use train-only globs.
+
+Minimal `packed_short_docs` source shape:
+
+```yaml
+data:
+  sources:
+    - name: short_docs
+      path: data/short-docs
+      glob: "**/*_train_*.bin"
+      weight: 0.05
+      sample_policy: packed_short_docs
+      prepare:
+        kind: hf_parquet
+        dataset: owner/dataset
+        text_column: text
+        split_mode: train-only
+        emit_doc_index: true
+        doc_id_column: doc_id
+        title_column: title
+```
 
 ## Validation safety
 

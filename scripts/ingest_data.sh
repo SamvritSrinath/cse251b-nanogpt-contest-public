@@ -28,13 +28,22 @@ Output options:
   --text-column NAME        Parquet text column. Default: text.
   --shard-prefix NAME       Output shard prefix. Default: source-name with '-' mapped to '_'.
   --max-parquet-files N     Forwarded to corpus-prep for smoke tests.
+  --split-mode MODE         corpus-prep split mode. Default: train-only.
+  --emit-doc-index          Emit <shard>.bin.docs.json sidecars.
+  --doc-id-column NAME      Optional metadata column for doc ids.
+  --title-column NAME       Optional metadata column for titles.
+  --section-column NAME     Optional metadata column for sections.
 
 Behavior:
   --dry-run                 List what would be downloaded/read, then exit.
   --keep-raw-parquet        Keep the managed HF parquet cache after successful sharding.
+  --clean-hf-cache-after-source
+  --clean-cache-after-success
+                            Cleanup aliases; both keep the default raw-cache cleanup enabled.
   --delete-local-parquet    Remove --local-parquet-dir after successful sharding.
   --no-clean-raw-cache      Do not clear the managed HF parquet cache before download.
   --no-clean-output         Do not clear the output shard dir before tokenization.
+  --min-free-gb N           Require at least N GB free on the repo root filesystem before ingest.
   --gcs-uri URI             Optional gs:// destination to upload the final shard dir.
   -h, --help                Show this help text.
 
@@ -75,12 +84,41 @@ OUT_DIR=""
 TEXT_COLUMN="text"
 SHARD_PREFIX=""
 MAX_PARQUET_FILES=""
+SPLIT_MODE="train-only"
+EMIT_DOC_INDEX=0
+DOC_ID_COLUMN=""
+TITLE_COLUMN=""
+SECTION_COLUMN=""
 DRY_RUN=0
 KEEP_RAW_PARQUET=0
 DELETE_LOCAL_PARQUET=0
 CLEAN_RAW_CACHE=1
 CLEAN_OUTPUT=1
 GCS_URI=""
+MIN_FREE_GB=""
+
+print_disk_usage() {
+  local label="$1"
+  echo "ingest-data: disk usage (${label})"
+  df -h /
+  du -sh "${DATA_ROOT}" 2>/dev/null || true
+  if [[ -n "${RAW_CACHE_DIR}" ]]; then du -sh "${RAW_CACHE_DIR}" 2>/dev/null || true; fi
+  if [[ -n "${OUT_DIR}" ]]; then du -sh "${OUT_DIR}" 2>/dev/null || true; fi
+}
+
+check_min_free_gb() {
+  local min_gb="$1"
+  local available
+  available="$(df -BG "${REPO_ROOT}" | awk 'NR==2 {gsub(/G/, "", $4); print $4}')"
+  if [[ -z "${available}" ]]; then
+    echo "ingest-data: could not determine free disk for ${REPO_ROOT}" >&2
+    exit 1
+  fi
+  if (( available < min_gb )); then
+    echo "ingest-data: only ${available} GB free on repo filesystem; need at least ${min_gb} GB" >&2
+    exit 1
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -132,12 +170,36 @@ while [[ $# -gt 0 ]]; do
       MAX_PARQUET_FILES="${2:-}"
       shift 2
       ;;
+    --split-mode)
+      SPLIT_MODE="${2:-}"
+      shift 2
+      ;;
+    --emit-doc-index)
+      EMIT_DOC_INDEX=1
+      shift
+      ;;
+    --doc-id-column)
+      DOC_ID_COLUMN="${2:-}"
+      shift 2
+      ;;
+    --title-column)
+      TITLE_COLUMN="${2:-}"
+      shift 2
+      ;;
+    --section-column)
+      SECTION_COLUMN="${2:-}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
       ;;
     --keep-raw-parquet)
       KEEP_RAW_PARQUET=1
+      shift
+      ;;
+    --clean-hf-cache-after-source|--clean-cache-after-success)
+      KEEP_RAW_PARQUET=0
       shift
       ;;
     --delete-local-parquet)
@@ -154,6 +216,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --gcs-uri)
       GCS_URI="${2:-}"
+      shift 2
+      ;;
+    --min-free-gb)
+      MIN_FREE_GB="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -197,6 +263,10 @@ if [[ -z "${SHARD_PREFIX}" ]]; then
   SHARD_PREFIX="$(printf '%s' "${SOURCE_NAME}" | tr '-' '_')"
 fi
 
+if [[ -n "${MIN_FREE_GB}" ]]; then
+  check_min_free_gb "${MIN_FREE_GB}"
+fi
+
 if [[ "${DRY_RUN}" == "1" ]]; then
   if [[ -n "${HF_DATASET}" ]]; then
     data_hf_snapshot_download \
@@ -217,6 +287,8 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   fi
   exit 0
 fi
+
+print_disk_usage "before ${SOURCE_NAME}"
 
 if [[ -n "${HF_DATASET}" ]]; then
   data_need_cmd cargo
@@ -264,9 +336,23 @@ cmd=(
   --out "${OUT_DIR}"
   --shard-prefix "${SHARD_PREFIX}"
   --text-column "${TEXT_COLUMN}"
+  --split-mode "${SPLIT_MODE}"
+  --source-name "${SOURCE_NAME}"
 )
 if [[ -n "${MAX_PARQUET_FILES}" ]]; then
   cmd+=(--max-parquet-files "${MAX_PARQUET_FILES}")
+fi
+if [[ "${EMIT_DOC_INDEX}" == "1" ]]; then
+  cmd+=(--emit-doc-index)
+fi
+if [[ -n "${DOC_ID_COLUMN}" ]]; then
+  cmd+=(--doc-id-column "${DOC_ID_COLUMN}")
+fi
+if [[ -n "${TITLE_COLUMN}" ]]; then
+  cmd+=(--title-column "${TITLE_COLUMN}")
+fi
+if [[ -n "${SECTION_COLUMN}" ]]; then
+  cmd+=(--section-column "${SECTION_COLUMN}")
 fi
 "${cmd[@]}"
 
@@ -284,6 +370,7 @@ if [[ -n "${GCS_URI}" ]]; then
   gcloud storage cp --recursive "${OUT_DIR}" "${GCS_URI}"
 fi
 
+print_disk_usage "after ${SOURCE_NAME}"
 echo "ingest-data: done"
 echo "ingest-data: source-name=${SOURCE_NAME}"
 echo "ingest-data: out-dir=${OUT_DIR}"

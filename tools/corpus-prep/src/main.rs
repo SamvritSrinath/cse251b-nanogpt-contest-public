@@ -74,7 +74,7 @@ struct Args {
     #[arg(long, value_enum, default_value = "karpathy")]
     split_mode: SplitMode,
 
-    /// Emit one ``<shard>.docs.json`` sidecar with document/section token ranges.
+    /// Emit one ``<shard>.bin.docs.json`` sidecar with document/section token ranges.
     #[arg(long)]
     emit_doc_index: bool,
 
@@ -199,10 +199,10 @@ impl<'a> TextColumn<'a> {
         }
     }
 
-    fn value(&self, i: usize) -> &str {
+    fn value(&self, i: usize) -> Option<&str> {
         match self {
-            Self::Utf8(a) => a.value(i),
-            Self::LargeUtf8(a) => a.value(i),
+            Self::Utf8(a) => (!a.is_null(i)).then(|| a.value(i)),
+            Self::LargeUtf8(a) => (!a.is_null(i)).then(|| a.value(i)),
         }
     }
 }
@@ -490,16 +490,23 @@ fn process_batch(
         (0..n)
             .into_par_iter()
             .map(|i| {
-                let s = texts.value(i);
-                (i, tokenize_one(bpe, s))
+                let tokens = match texts.value(i).filter(|s| !s.trim().is_empty()) {
+                    Some(s) => tokenize_one(bpe, s),
+                    None => Ok(Vec::new()),
+                };
+                (i, tokens)
             })
             .collect()
     });
     indexed.sort_by_key(|(i, _)| *i);
     let mut out = Vec::with_capacity(n);
     for (i, r) in indexed {
+        let tokens = r.with_context(|| format!("tokenize row {}", row_base + i))?;
+        if tokens.is_empty() {
+            continue;
+        }
         out.push(TokenizedDoc {
-            tokens: r.with_context(|| format!("tokenize row {}", row_base + i))?,
+            tokens,
             meta: metadata.meta_for_row(path, row_base + i, i),
         });
     }
@@ -605,8 +612,11 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::StringArray;
+    use arrow_schema::{DataType, Field, Schema};
     use serde_json::Value;
     use std::fs;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_out(name: &str) -> PathBuf {
@@ -726,5 +736,46 @@ mod tests {
         assert_eq!(third["ranges"][0]["continued_from_previous"], true);
         assert_eq!(third["ranges"][0]["continues_to_next"], false);
         fs::remove_dir_all(out).unwrap();
+    }
+
+    #[test]
+    fn missing_optional_metadata_columns_are_ignored_unless_configured() {
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new("text", DataType::Utf8, true)])),
+            vec![Arc::new(StringArray::from(vec![Some("hello"), None, Some("")]))],
+        )
+        .unwrap();
+        let args = Args {
+            out: temp_out("metadata"),
+            text_column: "text".to_string(),
+            shard_prefix: "tiny".to_string(),
+            shard_size: 16,
+            batch_threads: 1,
+            local_parquet_dir: None,
+            hf_dataset: "unused".to_string(),
+            hf_subset: "unused".to_string(),
+            hf_revision: "main".to_string(),
+            max_parquet_files: None,
+            split_mode: SplitMode::TrainOnly,
+            emit_doc_index: true,
+            source_name: "unit".to_string(),
+            doc_id_column: None,
+            title_column: None,
+            section_column: None,
+        };
+
+        let metadata = MetadataColumns::from_batch(&batch, &args).unwrap();
+        let bpe = r50k_base().unwrap();
+        let texts = TextColumn::from_batch(&batch, "text").unwrap();
+        let docs = process_batch(&bpe, &texts, &metadata, Path::new("input.parquet"), 0, 1).unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].meta.doc_id, "input.parquet:0");
+
+        let configured = Args {
+            doc_id_column: Some("missing_doc_id".to_string()),
+            ..args
+        };
+        assert!(MetadataColumns::from_batch(&batch, &configured).is_err());
+        fs::remove_dir_all(configured.out).unwrap();
     }
 }

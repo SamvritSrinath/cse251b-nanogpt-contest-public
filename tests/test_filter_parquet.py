@@ -103,6 +103,79 @@ class FilterParquetTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("missing one of required column", result.stderr + result.stdout)
 
+    def test_dclm_edu_hi_keeps_only_high_score_english_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good_text = "Educational text with enough length. " * 12
+            self.write_parquet(
+                root / "in" / "dclm.parquet",
+                [
+                    {
+                        "text": good_text,
+                        "id": "good-int",
+                        "edu_int_score": 4,
+                        "edu_score": 1.0,
+                        "language": "en",
+                        "language_score": 0.95,
+                    },
+                    {
+                        "text": good_text,
+                        "id": "good-score",
+                        "edu_int_score": 1,
+                        "edu_score": 3.2,
+                        "language": "en",
+                        "language_score": 0.91,
+                    },
+                    {
+                        "text": good_text,
+                        "id": "bad-lang",
+                        "edu_int_score": 5,
+                        "edu_score": 4.0,
+                        "language": "fr",
+                        "language_score": 0.99,
+                    },
+                    {
+                        "text": "too short",
+                        "id": "bad-short",
+                        "edu_int_score": 5,
+                        "edu_score": 4.0,
+                        "language": "en",
+                        "language_score": 0.99,
+                    },
+                ],
+            )
+
+            result = self.run_filter("dclm_edu_hi", root / "in", root / "out")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rows = pq.read_table(root / "out" / "dclm.parquet").to_pylist()
+            self.assertEqual([row["doc_id"] for row in rows], ["good-int", "good-score"])
+
+    def test_conservative_v1_drops_obvious_low_quality_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good_text = "This is a normal educational document with enough prose. " * 8
+            repeated = "\n".join(["same footer"] * 12)
+            self.write_parquet(
+                root / "in" / "quality.parquet",
+                [
+                    {"text": good_text, "id": "good"},
+                    {"text": "tiny", "id": "short"},
+                    {"text": "$$$ !!! ### @@@ " * 20, "id": "symbols"},
+                    {"text": "Please enable JavaScript and accept cookies to continue.", "id": "js"},
+                    {"text": repeated, "id": "repeat"},
+                ],
+            )
+
+            result = self.run_filter("conservative_v1", root / "in", root / "out")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rows = pq.read_table(root / "out" / "quality.parquet").to_pylist()
+            self.assertEqual([row["doc_id"] for row in rows], ["good"])
+            output = result.stdout + result.stderr
+            self.assertIn("top drop reasons", output)
+            self.assertIn("too_short", output)
+
 
 if __name__ == "__main__":
     unittest.main()

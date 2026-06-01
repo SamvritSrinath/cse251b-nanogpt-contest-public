@@ -25,10 +25,20 @@ def step_of(path: Path) -> int:
     return int(match.group(1)) if match else -1
 
 
-def extract_state_dict(state: Any, path: Path) -> Mapping[str, torch.Tensor]:
+def extract_state_dict(
+    state: Any,
+    path: Path,
+    *,
+    state_key: str | None,
+) -> Mapping[str, torch.Tensor]:
     if not isinstance(state, Mapping):
         raise ValueError(f"Expected checkpoint mapping at {path}.")
-    state_dict = state["model_state_dict"] if "model_state_dict" in state else state
+    if state_key is not None:
+        if state_key not in state:
+            raise ValueError(f"Checkpoint {path} does not contain state key '{state_key}'.")
+        state_dict = state[state_key]
+    else:
+        state_dict = state["model_state_dict"] if "model_state_dict" in state else state
     if not isinstance(state_dict, Mapping):
         raise ValueError(f"Expected model state dict mapping at {path}.")
     return state_dict
@@ -43,10 +53,48 @@ def extract_config(state: Any, path: Path) -> dict[str, Any] | None:
     return None
 
 
+def assert_single_run(ckpts: list[Path]) -> None:
+    """Reject checkpoint selections that span multiple run directories."""
+
+    parents = {path.parent.resolve() for path in ckpts}
+    if len(parents) != 1:
+        joined = "\n  ".join(str(path) for path in ckpts)
+        raise ValueError(
+            "Refusing to average checkpoints from different directories. "
+            "Use one run/stage glob only.\n  "
+            f"{joined}"
+        )
+
+
+def assert_matching_config(
+    *,
+    expected: dict[str, Any] | None,
+    current: dict[str, Any] | None,
+    path: Path,
+) -> dict[str, Any] | None:
+    """Return the canonical config or fail when checkpoint configs differ."""
+
+    if current is None:
+        return expected
+    if expected is None:
+        return current
+    if current != expected:
+        raise ValueError(
+            f"Checkpoint config mismatch at {path}; refusing to average "
+            "checkpoints from different runs or training stages."
+        )
+    return expected
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Average training checkpoints into a submission bundle.")
     parser.add_argument("--glob", required=True, help="Example: 'checkpoints/RUN/ckpt_step*.pt'")
     parser.add_argument("--last", type=int, default=8)
+    parser.add_argument(
+        "--state-key",
+        default="model_state_dict",
+        help="Checkpoint state dict key to average, e.g. model_state_dict or ema_model_state_dict.",
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -56,6 +104,7 @@ def main() -> None:
     if args.last <= 0:
         raise ValueError("--last must be positive")
     ckpts = ckpts[-args.last :]
+    assert_single_run(ckpts)
 
     avg: dict[str, torch.Tensor] | None = None
     expected_keys: set[str] | None = None
@@ -63,7 +112,7 @@ def main() -> None:
 
     for ckpt_path in ckpts:
         state = safe_load(ckpt_path)
-        state_dict = extract_state_dict(state, ckpt_path)
+        state_dict = extract_state_dict(state, ckpt_path, state_key=args.state_key)
         keys = set(state_dict.keys())
         if expected_keys is None:
             expected_keys = keys
@@ -73,8 +122,11 @@ def main() -> None:
             raise ValueError(
                 f"Checkpoint key mismatch at {ckpt_path}; missing={missing} extra={extra}"
             )
-        if config is None:
-            config = extract_config(state, ckpt_path)
+        config = assert_matching_config(
+            expected=config,
+            current=extract_config(state, ckpt_path),
+            path=ckpt_path,
+        )
 
         if avg is None:
             avg = {}

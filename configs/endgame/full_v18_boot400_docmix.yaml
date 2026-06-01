@@ -1,0 +1,146 @@
+name: full_v18_boot400_docmix
+
+architecture:
+  name: modern_decoder
+  n_layer: 16
+  d_model: 640
+  n_heads: 10
+  ffn_multiplier: 2.00
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+  qk_norm: true
+  residual_init: scaled
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.0003
+  muon_lr: 0.02
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu_hi
+      path: data/fineweb-edu-hi
+      glob: "**/*_train_*.bin"
+      weight: 0.55
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: HuggingFaceFW/fineweb-edu
+        include: "sample/10BT/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: fineweb_edu_hi
+        filter_profile: fineweb_edu_hi
+        split_mode: train-only
+        emit_doc_index: false
+    - name: finerweb
+      path: data/finerweb
+      glob: "**/*_train_*.bin"
+      weight: 0.10
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: tiiuae/falcon-refinedweb
+        include: "**/*.parquet"
+        revision: main
+        text_column: content
+        shard_prefix: finerweb
+        filter_profile: finerweb_line_quality
+        split_mode: train-only
+        emit_doc_index: false
+        max_parquet_files: 64
+    - name: openwebtext
+      path: data/openwebtext
+      glob: "**/*_train_*.bin"
+      weight: 0.10
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: Skylion007/openwebtext
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: openwebtext
+        split_mode: train-only
+        emit_doc_index: false
+    - name: wikimedia
+      path: data/wikimedia
+      glob: "**/*_train_*.bin"
+      weight: 0.08
+      sample_policy: document_window
+      prepare:
+        kind: hf_stream_json
+        dataset: common-pile/wikimedia_filtered
+        revision: main
+        shard_prefix: wikimedia
+        split_mode: train-only
+        emit_doc_index: true
+        max_docs: 5000000
+        max_temp_gb: 40
+    - name: pg19_books
+      path: data/pg19-books
+      glob: "**/*_train_*.bin"
+      weight: 0.10
+      sample_policy: document_window
+      prepare:
+        kind: hf_parquet
+        dataset: emozilla/pg19
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: pg19_books
+        filter_profile: pg19_books
+        split_mode: train-only
+        emit_doc_index: true
+    - name: openwebmath
+      path: data/openwebmath
+      glob: "**/*_train_*.bin"
+      weight: 0.07
+      sample_policy: document_window
+      prepare:
+        kind: hf_parquet
+        dataset: open-web-math/open-web-math
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: openwebmath
+        filter_profile: openwebmath
+        split_mode: train-only
+        emit_doc_index: true
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests-v18-boot400
+
+train:
+  max_steps: 22000
+  batch_size: 16
+  grad_accum_steps: 6
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 500
+  save_interval: 500
+  eval_batch_size: 8
+  eval_batches: null
+  seed: 1345
+  device: cuda
+  compile: true
+  precision: bf16
+  warmup_steps: 400
+  min_lr_ratio: 0.08
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  keep_step_checkpoints: false
+  resume_from: null  # TODO: set to a checkpoint path for continuation runs.
+  context_schedule:
+    name: fixed
+    end_context_len: 1024
