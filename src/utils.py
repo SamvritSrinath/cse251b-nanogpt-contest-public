@@ -51,6 +51,7 @@ class ArchitectureConfig:
     name: str
     n_layer: int
     d_model: int
+    embedding_dim: int | None
     n_heads: int
     ffn_multiplier: float
     context_len: int
@@ -68,6 +69,9 @@ class ArchitectureConfig:
             name=str(data.get("name", "modern_decoder")),
             n_layer=int(data["n_layer"]),
             d_model=int(data["d_model"]),
+            embedding_dim=None
+            if data.get("embedding_dim") is None
+            else int(data["embedding_dim"]),
             n_heads=int(data["n_heads"]),
             ffn_multiplier=float(data["ffn_multiplier"]),
             context_len=int(data["context_len"]),

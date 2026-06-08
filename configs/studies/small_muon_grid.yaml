@@ -1,0 +1,16 @@
+name: small_muon_grid
+mode: grid
+base_config: configs/small_v2_mix_ablation.yaml
+output_dir: experiments/studies
+objective:
+  metric: val_ppl
+  direction: minimize
+parallelism: 1
+resume: true
+search_space:
+  - path: optimizer.muon_lr
+    type: categorical
+    values: [0.015, 0.02, 0.025]
+  - path: optimizer.muon_ns_steps
+    type: categorical
+    values: [3, 5]

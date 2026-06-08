@@ -1,0 +1,19 @@
+name: wide_projected_lr_grid
+mode: grid
+base_config: configs/wide_projected_8l_192_768.yaml
+output_dir: experiments/studies
+objective:
+  metric: val_ppl
+  direction: minimize
+parallelism: 1
+resume: true
+search_space:
+  - path: optimizer.muon_lr
+    type: categorical
+    values: [0.015, 0.02]
+  - path: train.warmup_steps
+    type: categorical
+    values: [100, 300]
+  - path: train.min_lr_ratio
+    type: categorical
+    values: [0.1, 0.2]

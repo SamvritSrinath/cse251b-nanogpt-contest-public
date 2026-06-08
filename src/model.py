@@ -63,6 +63,14 @@ def build_modern_recipe(config: ArchitectureConfig) -> ArchitectureRecipe:
     )
 
 
+def build_projected_modern_recipe(config: ArchitectureConfig) -> ArchitectureRecipe:
+    """Resolve the projected-embedding modern decoder bundle."""
+
+    if config.embedding_dim is None:
+        raise ValueError("projected_modern_decoder requires architecture.embedding_dim.")
+    return build_modern_recipe(config)
+
+
 def build_gpt2_recipe(config: ArchitectureConfig) -> ArchitectureRecipe:
     """Resolve the GPT-2-style learned-position + LayerNorm + GELU bundle."""
 
@@ -78,6 +86,7 @@ def build_gpt2_recipe(config: ArchitectureConfig) -> ArchitectureRecipe:
 
 ARCHITECTURE_REGISTRY: dict[str, Callable[[ArchitectureConfig], ArchitectureRecipe]] = {
     "modern_decoder": build_modern_recipe,
+    "projected_modern_decoder": build_projected_modern_recipe,
     "gpt2_decoder": build_gpt2_recipe,
     # Keeping registry-based stubs makes it obvious where future MTP variants plug in.
     # "mtp_decoder": build_mtp_recipe,
@@ -282,16 +291,27 @@ class DecoderLanguageModel(nn.Module):
         super().__init__()
         self.config = config
         self.recipe = recipe
-        self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
+        self.embedding_dim = config.embedding_dim or config.d_model
+        self.token_embedding = nn.Embedding(config.vocab_size, self.embedding_dim)
+        self.input_proj = (
+            nn.Linear(self.embedding_dim, config.d_model, bias=recipe.bias)
+            if self.embedding_dim != config.d_model
+            else nn.Identity()
+        )
         self.position_embedding = (
-            nn.Embedding(config.context_len, config.d_model)
+            nn.Embedding(config.context_len, self.embedding_dim)
             if recipe.use_learned_positions
             else None
         )
         self.dropout = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([DecoderBlock(config, recipe) for _ in range(config.n_layer)])
         self.final_norm = make_norm(recipe.norm_type, config.d_model)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.output_proj = (
+            nn.Linear(config.d_model, self.embedding_dim, bias=recipe.bias)
+            if self.embedding_dim != config.d_model
+            else nn.Identity()
+        )
+        self.lm_head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
         if config.weight_tying:
             self.lm_head.weight = self.token_embedding.weight
         self.apply(self._init_weights)
@@ -321,10 +341,12 @@ class DecoderLanguageModel(nn.Module):
             # GPT-2-style ablations keep learned absolute position embeddings explicit.
             positions = torch.arange(seq_len, device=input_ids.device)
             x = x + self.position_embedding(positions)[None, :, :]
+        x = self.input_proj(x)
         x = self.dropout(x)
         for block in self.blocks:
             x = block(x)
         x = self.final_norm(x)
+        x = self.output_proj(x)
         return self.lm_head(x)
 
 
