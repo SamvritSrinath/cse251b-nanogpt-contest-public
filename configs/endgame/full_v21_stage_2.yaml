@@ -1,0 +1,106 @@
+name: full_v21_stage2_nodclm_books_factual_lowlr
+
+architecture:
+  name: modern_decoder
+  n_layer: 21
+  d_model: 576
+  n_heads: 9
+  ffn_multiplier: 2.00
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.0000225
+  muon_lr: 0.0015
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu_hi
+      path: data/fineweb-edu-hi
+      glob: "**/*_train_*.bin"
+      weight: 0.34
+      sample_policy: random_window
+
+    - name: commonpile_wikimedia
+      path: data/commonpile-wikimedia
+      glob: "**/*_train_*.bin"
+      weight: 0.23
+      sample_policy: document_window
+
+    - name: pg19_books
+      path: data/pg19-books
+      glob: "**/*_train_*.bin"
+      weight: 0.30
+      sample_policy: document_window
+
+    # - name: commonpile_gutenberg
+    #   path: data/commonpile-gutenberg
+    #   glob: "**/*_train_*.bin"
+    #   weight: 0.08
+    #   sample_policy: document_window
+
+    - name: openwebtext
+      path: data/openwebtext
+      glob: "**/*_train_*.bin"
+      weight: 0.06
+      sample_policy: random_window
+
+    - name: commonpile_stackexchange
+      path: data/commonpile-stackexchange
+      glob: "**/*_train_*.bin"
+      weight: 0.04
+      sample_policy: document_window
+
+    - name: arxiv_abstracts
+      path: data/commonpile-arxiv-abstracts
+      glob: "**/*_train_*.bin"
+      weight: 0.02
+      sample_policy: document_window
+
+    - name: commonpile_youtube
+      path: data/commonpile-youtube
+      glob: "**/*_train_*.bin"
+      weight: 0.01
+      sample_policy: random_window
+
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests-v20-nodclm
+
+train:
+  max_steps: 73000
+  batch_size: 16
+  grad_accum_steps: 6
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 500
+  save_interval: 500
+  eval_batch_size: 8
+  eval_batches: null
+  seed: 1351
+  device: cuda
+  compile: true
+  precision: bf16
+
+  # Replace with Stage 1 best checkpoint.
+  resume_from: checkpoints/TODO_STAGE1_BEST/best.pt
+
+  warmup_steps: 0
+  min_lr_ratio: 0.1
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  keep_step_checkpoints: false
+  context_schedule:
+    name: fixed
+    end_context_len: 1024

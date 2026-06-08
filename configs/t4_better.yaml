@@ -28,7 +28,7 @@ data:
   sources:
     - name: fineweb_edu
       path: data/fineweb-edu
-      glob: "**/*.bin"
+      glob: "**/*_train_*.bin"
       weight: 1.0
       notes: "Bin shards (same layout as medium.yaml). Original t4_better used build-nanogpt/edu_fineweb10B *.npy."
   val_data_path: val.bin

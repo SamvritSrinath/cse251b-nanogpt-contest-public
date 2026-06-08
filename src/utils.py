@@ -60,11 +60,18 @@ class ArchitectureConfig:
     dropout: float = 0.0
     bias: bool | None = None
     rope_base: float = 10_000.0
+    qk_norm: bool = False
+    residual_init: str = "default"
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ArchitectureConfig":
         """Build an architecture config from a plain mapping."""
 
+        residual_init = str(data.get("residual_init", "default")).lower()
+        if residual_init not in {"default", "scaled"}:
+            raise ValueError(
+                "architecture.residual_init must be 'default' or 'scaled'."
+            )
         return cls(
             name=str(data.get("name", "modern_decoder")),
             n_layer=int(data["n_layer"]),
@@ -80,6 +87,8 @@ class ArchitectureConfig:
             dropout=float(data.get("dropout", 0.0)),
             bias=None if data.get("bias") is None else bool(data["bias"]),
             rope_base=float(data.get("rope_base", 10_000.0)),
+            qk_norm=bool(data.get("qk_norm", False)),
+            residual_init=residual_init,
         )
 
 
@@ -125,17 +134,35 @@ class DataSourceConfig:
     glob: str = "**/*.bin"
     weight: float = 1.0
     notes: str = ""
+    sample_policy: str = "random_window"
+    prepare: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "DataSourceConfig":
         """Build a source config from a plain mapping."""
 
+        sample_policy = str(data.get("sample_policy", "random_window"))
+        if sample_policy not in {
+            "random_window",
+            "document_window",
+            "section_window",
+            "packed_short_docs",
+        }:
+            raise ValueError(
+                "data.sources[].sample_policy must be one of: random_window, "
+                "document_window, section_window, packed_short_docs."
+            )
+        prepare = None
+        if data.get("prepare") is not None:
+            prepare = dict(data["prepare"])
         return cls(
             name=str(data["name"]),
             path=str(data["path"]),
             glob=str(data.get("glob", "**/*.bin")),
             weight=float(data.get("weight", 1.0)),
             notes=str(data.get("notes", "")),
+            sample_policy=sample_policy,
+            prepare=prepare,
         )
 
 
@@ -233,7 +260,19 @@ class TrainConfig:
     checkpoint_dir: str = "checkpoints"
     submission_dir: str = "submission"
     resume_from: str | None = None
+    resume_initial_step: int | None = None
+    resume_initial_val_ppl: float | None = None
+    lr_schedule_origin: str = "absolute"
     log_cuda_memory: bool = False
+    use_ema: bool = False
+    ema_decay: float = 0.999
+    ema_eval: bool = True
+    ema_device: str = "cuda"
+    use_teacher: bool = False
+    teacher_model_name: str = "openai-community/gpt2-large"
+    teacher_weight: float = 0.0
+    teacher_temperature: float = 2.0
+    teacher_device: str = "cuda"
     context_schedule: ContextScheduleConfig = field(default_factory=ContextScheduleConfig)
 
     @classmethod
@@ -246,6 +285,24 @@ class TrainConfig:
             raise ValueError(
                 f"Unsupported train.precision '{precision}'. Supported values: fp32, bf16."
             )
+        lr_schedule_origin = str(data.get("lr_schedule_origin", "absolute")).lower()
+        if lr_schedule_origin not in {"absolute", "resume"}:
+            raise ValueError("train.lr_schedule_origin must be 'absolute' or 'resume'.")
+        ema_device = str(data.get("ema_device", "cuda")).lower()
+        if ema_device not in {"cuda", "cpu"}:
+            raise ValueError("train.ema_device must be 'cuda' or 'cpu'.")
+        ema_decay = float(data.get("ema_decay", 0.999))
+        if not 0.0 <= ema_decay < 1.0:
+            raise ValueError("train.ema_decay must satisfy 0.0 <= ema_decay < 1.0.")
+        teacher_device = str(data.get("teacher_device", "cuda")).lower()
+        if teacher_device not in {"cuda", "cpu"}:
+            raise ValueError("train.teacher_device must be 'cuda' or 'cpu'.")
+        teacher_weight = float(data.get("teacher_weight", 0.0))
+        if not 0.0 <= teacher_weight <= 1.0:
+            raise ValueError("train.teacher_weight must satisfy 0.0 <= teacher_weight <= 1.0.")
+        teacher_temperature = float(data.get("teacher_temperature", 2.0))
+        if teacher_temperature <= 0.0:
+            raise ValueError("train.teacher_temperature must be positive.")
         return cls(
             max_steps=int(data["max_steps"]),
             batch_size=int(data["batch_size"]),
@@ -265,7 +322,23 @@ class TrainConfig:
             checkpoint_dir=str(data.get("checkpoint_dir", "checkpoints")),
             submission_dir=str(data.get("submission_dir", "submission")),
             resume_from=None if data.get("resume_from") is None else str(data["resume_from"]),
+            resume_initial_step=None
+            if data.get("resume_initial_step") is None
+            else int(data["resume_initial_step"]),
+            resume_initial_val_ppl=None
+            if data.get("resume_initial_val_ppl") is None
+            else float(data["resume_initial_val_ppl"]),
+            lr_schedule_origin=lr_schedule_origin,
             log_cuda_memory=bool(data.get("log_cuda_memory", False)),
+            use_ema=bool(data.get("use_ema", False)),
+            ema_decay=ema_decay,
+            ema_eval=bool(data.get("ema_eval", True)),
+            ema_device=ema_device,
+            use_teacher=bool(data.get("use_teacher", False)),
+            teacher_model_name=str(data.get("teacher_model_name", "openai-community/gpt2-large")),
+            teacher_weight=teacher_weight,
+            teacher_temperature=teacher_temperature,
+            teacher_device=teacher_device,
             context_schedule=ContextScheduleConfig.from_dict(data.get("context_schedule")),
         )
 
@@ -570,6 +643,26 @@ def compute_warmup_steps(train_config: TrainConfig) -> int:
     return max(1, train_config.max_steps // 100)
 
 
+def resolve_warmup_steps(
+    train_config: TrainConfig,
+    *,
+    initial_step: int,
+    resumed: bool,
+) -> int:
+    """Resolve warmup steps for this run, disabling warmup on checkpoint resume.
+
+    Continuation runs load weights that already passed warmup. Re-applying warmup
+    would drop LR below the checkpoint's effective rate and waste steps.
+    """
+
+    if resumed and train_config.lr_schedule_origin == "resume":
+        return compute_warmup_steps(train_config)
+
+    if resumed or initial_step > 0:
+        return 0
+    return compute_warmup_steps(train_config)
+
+
 def resolve_context_length(
     schedule: ContextScheduleConfig,
     *,
@@ -684,22 +777,26 @@ def save_training_checkpoint(
     config: ExperimentConfig,
     step: int,
     val_ppl: float,
+    ema_model: torch.nn.Module | None = None,
+    ema_val_ppl: float | None = None,
 ) -> None:
     """Save a wrapped training checkpoint with optimizer state and config."""
 
     ensure_parent_dir(path)
     checkpoint_dir = Path(path).parent
     save_json(checkpoint_dir / "config.json", experiment_config_to_dict(config))
-    torch.save(
-        {
-            "step": step,
-            "model_state_dict": unwrap_model(model).state_dict(),
-            "optimizer_state_dict": optimizer_state,
-            "config": experiment_config_to_dict(config),
-            "val_ppl": val_ppl,
-        },
-        path,
-    )
+    payload: dict[str, Any] = {
+        "step": step,
+        "model_state_dict": unwrap_model(model).state_dict(),
+        "optimizer_state_dict": optimizer_state,
+        "config": experiment_config_to_dict(config),
+        "val_ppl": val_ppl,
+    }
+    if ema_model is not None:
+        payload["ema_model_state_dict"] = unwrap_model(ema_model).state_dict()
+        if ema_val_ppl is not None:
+            payload["ema_val_ppl"] = ema_val_ppl
+    torch.save(payload, path)
 
 
 def export_submission_bundle(

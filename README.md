@@ -157,6 +157,14 @@ Preferred in this repository:
 ```
 
 This prepares the configured corpora and writes GPT-2-tokenized `.bin` shards under `data/`.
+Configs with `data.sources[].prepare` use the config-native pipeline:
+
+```bash
+python scripts/prepare_sources.py --config configs/data_sprints/probe_b_clean_web.yaml --dry-run
+python scripts/prepare_sources.py --config configs/data_sprints/probe_b_clean_web.yaml
+```
+
+Prepared sprint sources emit train-only shards matching `**/*_train_*.bin`; document-aware sources can also emit `<shard>.docs.json` sidecars for `document_window`, `section_window`, and `packed_short_docs` sampling.
 For direct ingestion from Hugging Face parquet snapshots, use `./scripts/ingest_data.sh --help`.
 For workspace/bootstrap guidance and mounted-disk usage, see [docs/gcp_quickstart.md](docs/gcp_quickstart.md).
 For direct access to the Rust tokenizer without remembering the Cargo target path, use `./scripts/corpus_prep.sh --help`.
@@ -179,6 +187,47 @@ python evaluate.py --model_dir /path/to/your/model/ --data val.bin
 # Once you've uploaded to HuggingFace, verify the submission works:
 python evaluate.py --hf_repo your-username/cse251b-group-XX --data val.bin
 ```
+
+### EMA and Checkpoint Averaging
+
+EMA is opt-in and exports separate bundles so the raw submission path is never replaced silently:
+
+```yaml
+train:
+  use_ema: true
+  ema_decay: 0.999
+  ema_eval: true
+  ema_device: cuda
+```
+
+GPT-2 Large teacher distillation is also opt-in. It is disabled by default and never changes the exported model parameter count:
+
+```yaml
+train:
+  use_teacher: true
+  teacher_model_name: openai-community/gpt2-large
+  teacher_weight: 0.1
+  teacher_temperature: 2.0
+  teacher_device: cuda
+```
+
+```bash
+PYTHONPATH=. python -m src.train --config configs/endgame/v21resolved.yaml --notes "ema raw+explicit-ema export"
+```
+
+Evaluate raw, EMA, and averaged checkpoints explicitly:
+
+```bash
+RUN_ID=20260529-123456
+python scripts/average_checkpoints.py --glob "checkpoints/${RUN_ID}/ckpt_step*.pt" --last 5 --out "submission/${RUN_ID}/avg_last5"
+python scripts/average_checkpoints.py --glob "checkpoints/${RUN_ID}/ckpt_step*.pt" --last 5 --state-key ema_model_state_dict --out "submission/${RUN_ID}/avg_last5_ema"
+python evaluate.py --model_dir "submission/${RUN_ID}/best" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+python evaluate.py --model_dir "submission/${RUN_ID}/best_ema" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+python evaluate.py --model_dir "submission/${RUN_ID}/avg_last5" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+python evaluate.py --model_dir "submission/${RUN_ID}/avg_last5_ema" --data val.bin --block_size 1024 --batch_size 8 --device cuda
+```
+
+Only average checkpoints from the same run and training stage. The averaging script refuses mixed directories or mismatched configs.
 
 ### 6. Iterate!
 

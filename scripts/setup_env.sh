@@ -18,6 +18,8 @@ Options:
   --env-file PATH           Shell env file to write and source. Default: <repo>/.workspace-env.sh
   --venv PATH               Virtualenv path. Default: <repo>/.venv
   --skip-apt                Skip apt-get update/install.
+  --skip-rust               Skip rustup, toolchain setup, and corpus-prep build (data role).
+                            Use when tokenized shards are synced from GCS or another machine.
   --skip-corpus-build       Do not prebuild tools/corpus-prep on the data role.
   --torch-index-url URL     Install torch/torchvision/torchaudio from this index if torch
                             is not already visible inside the venv.
@@ -48,6 +50,7 @@ WORKSPACE_ROOT="${REPO_ROOT}"
 ENV_FILE="${REPO_ROOT}/.workspace-env.sh"
 VENV_DIR="${REPO_ROOT}/.venv"
 SKIP_APT=0
+SKIP_RUST=0
 SKIP_CORPUS_BUILD=0
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-}"
 
@@ -67,6 +70,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-apt)
       SKIP_APT=1
+      shift
+      ;;
+    --skip-rust)
+      SKIP_RUST=1
+      SKIP_CORPUS_BUILD=1
       shift
       ;;
     --skip-corpus-build)
@@ -127,7 +135,7 @@ fi
 
 if [[ "${SKIP_APT}" != "1" ]]; then
   ${SUDO} apt-get update
-  if [[ "${ROLE}" == "data" ]]; then
+  if [[ "${ROLE}" == "data" && "${SKIP_RUST}" != "1" ]]; then
     ${SUDO} apt-get install -y build-essential curl git libssl-dev pkg-config python3-pip python3-venv tmux
   else
     ${SUDO} apt-get install -y git python3-pip python3-venv tmux
@@ -143,25 +151,25 @@ command -v git >/dev/null 2>&1 || {
   exit 1
 }
 
-# Pin Rust to the workspace CARGO_HOME/RUSTUP_HOME from the env file. If we only checked
-# `command -v cargo`, a user-level cargo would skip rustup-init while RUSTUP_HOME still
-# pointed at an empty workspace .rustup, and builds would fail with "no default toolchain".
-if [[ "${ROLE}" == "data" ]] && [[ ! -x "${CARGO_HOME}/bin/cargo" ]]; then
-  command -v curl >/dev/null 2>&1 || {
-    echo "setup-env: curl is required to install rustup" >&2
-    exit 1
-  }
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-fi
+if [[ "${ROLE}" == "data" && "${SKIP_RUST}" != "1" ]]; then
+  # Pin Rust to the workspace CARGO_HOME/RUSTUP_HOME from the env file. If we only checked
+  # `command -v cargo`, a user-level cargo would skip rustup-init while RUSTUP_HOME still
+  # pointed at an empty workspace .rustup, and builds would fail with "no default toolchain".
+  if [[ ! -x "${CARGO_HOME}/bin/cargo" ]]; then
+    command -v curl >/dev/null 2>&1 || {
+      echo "setup-env: curl is required to install rustup" >&2
+      exit 1
+    }
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  fi
 
-if [[ -f "${CARGO_HOME}/env" ]]; then
-  # shellcheck disable=SC1090
-  source "${CARGO_HOME}/env"
-fi
+  if [[ -f "${CARGO_HOME}/env" ]]; then
+    # shellcheck disable=SC1090
+    source "${CARGO_HOME}/env"
+  fi
 
-# rustup can be on PATH with no default toolchain (fresh multi-user installs, or interrupted
-# setup). cargo then fails with: "rustup could not choose a version of cargo to run".
-if [[ "${ROLE}" == "data" ]]; then
+  # rustup can be on PATH with no default toolchain (fresh multi-user installs, or interrupted
+  # setup). cargo then fails with: "rustup could not choose a version of cargo to run".
   _rustup=""
   if [[ -x "${CARGO_HOME}/bin/rustup" ]]; then
     _rustup="${CARGO_HOME}/bin/rustup"
@@ -188,10 +196,12 @@ source "${ACTIVATE_PATH}"
 python -m pip install --upgrade pip wheel
 
 if [[ "${ROLE}" == "data" ]]; then
-  command -v cargo >/dev/null 2>&1 || {
-    echo "setup-env: cargo is required for data role" >&2
-    exit 1
-  }
+  if [[ "${SKIP_RUST}" != "1" ]]; then
+    command -v cargo >/dev/null 2>&1 || {
+      echo "setup-env: cargo is required for data role (or pass --skip-rust if shards come from GCS)" >&2
+      exit 1
+    }
+  fi
   python -m pip install PyYAML hf_transfer huggingface_hub
   if [[ "${SKIP_CORPUS_BUILD}" != "1" ]]; then
     (cd "${REPO_ROOT}/tools/corpus-prep" && cargo build --release)
@@ -199,7 +209,11 @@ if [[ "${ROLE}" == "data" ]]; then
   echo "setup-env: data role ready"
   echo "setup-env: source ${ENV_FILE}"
   echo "setup-env: source ${ACTIVATE_PATH}"
-  echo "setup-env: next step: ./scripts/ingest_data.sh --hf-dataset HuggingFaceFW/fineweb-edu --include \"sample/10BT/*.parquet\" --source-name fineweb-edu --shard-prefix edufineweb"
+  if [[ "${SKIP_RUST}" == "1" ]]; then
+    echo "setup-env: rust/corpus-prep skipped; sync tokenized .bin shards from GCS, then symlink under data/"
+  else
+    echo "setup-env: next step: ./scripts/ingest_data.sh --hf-dataset HuggingFaceFW/fineweb-edu --include \"sample/10BT/*.parquet\" --source-name fineweb-edu --shard-prefix edufineweb"
+  fi
 else
   python -m pip install PyYAML huggingface_hub numpy optuna tqdm
   if ! python -c "import torch" >/dev/null 2>&1; then

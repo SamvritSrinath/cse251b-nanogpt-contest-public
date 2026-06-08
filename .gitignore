@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+!scripts/lib/
+!scripts/lib/data.sh
 parts/
 sdist/
 var/
@@ -240,3 +242,9 @@ __marimo__/
 # complete AI Output
 repopack-output.txt
 .repopackignore
+
+.cargo/
+.hf/
+.rustup/
+tests/
+submission/

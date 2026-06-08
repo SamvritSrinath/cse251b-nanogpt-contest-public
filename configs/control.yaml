@@ -30,12 +30,12 @@ data:
   sources:
     - name: fineweb_edu
       path: data/fineweb-edu
-      glob: "**/*.bin"
+      glob: "**/*_train_*.bin"
       weight: 1.0
       notes: "Just general data source"
     # - name: general_web
     #   path: data/general-web
-    #   glob: "**/*.bin"
+    #   glob: "**/*_train_*.bin"
     #   weight: 0.1
     #   notes: ""
   val_data_path: val.bin

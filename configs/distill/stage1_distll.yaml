@@ -1,0 +1,188 @@
+name: full_v26_teacher_clean_256_bootcamp
+
+architecture:
+  name: projected_modern_decoder
+  n_layer: 12
+  embedding_dim: 256
+  d_model: 768
+  n_heads: 12
+  ffn_multiplier: 2.67
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+  qk_norm: true
+  residual_init: scaled
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.0003
+  muon_lr: 0.02
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu_clean
+      path: data/fineweb-edu-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.58
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: HuggingFaceFW/fineweb-edu
+        include: "sample/10BT/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: fineweb_edu_clean
+        filter_profile: conservative_v1
+        split_mode: train-only
+        emit_doc_index: true
+        doc_id_column: doc_id
+        title_column: title
+        max_temp_gb: 40
+
+    - name: openwebtext_clean
+      path: data/openwebtext-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.14
+      sample_policy: random_window
+      prepare:
+        kind: hf_parquet
+        dataset: Skylion007/openwebtext
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: openwebtext_clean
+        filter_profile: conservative_v1
+        split_mode: train-only
+        emit_doc_index: true
+        doc_id_column: doc_id
+        title_column: title
+        max_temp_gb: 40
+
+    - name: commonpile_wikimedia_clean
+      path: data/commonpile-wikimedia-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.10
+      sample_policy: document_window
+      prepare:
+        kind: hf_stream_json
+        dataset: common-pile/wikimedia_filtered
+        revision: main
+        shard_prefix: commonpile_wikimedia_clean
+        filter_profile: conservative_v1
+        split_mode: train-only
+        emit_doc_index: true
+        doc_id_column: doc_id
+        title_column: title
+        max_docs: 5000000
+        max_temp_gb: 40
+
+    - name: arxiv_abstracts_clean
+      path: data/commonpile-arxiv-abstracts-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.06
+      sample_policy: random_window
+      prepare:
+        kind: hf_stream_json
+        dataset: common-pile/arxiv_abstracts_filtered
+        revision: main
+        shard_prefix: arxiv_abstracts_clean
+        filter_profile: conservative_v1
+        split_mode: train-only
+        emit_doc_index: true
+        doc_id_column: doc_id
+        title_column: title
+        max_docs: 1000000
+        max_temp_gb: 20
+
+    - name: pg19_books_clean
+      path: data/pg19-books-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.08
+      sample_policy: document_window
+      prepare:
+        kind: hf_parquet
+        dataset: emozilla/pg19
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: pg19_books_clean
+        filter_profile: pg19_books
+        split_mode: train-only
+        emit_doc_index: true
+        doc_id_column: doc_id
+        title_column: title
+        max_temp_gb: 40
+
+    - name: commonpile_stackexchange_clean
+      path: data/commonpile-stackexchange-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.04
+      sample_policy: random_window
+      prepare:
+        kind: hf_stream_json
+        dataset: common-pile/stackexchange_filtered
+        revision: main
+        shard_prefix: commonpile_stackexchange_clean
+        filter_profile: conservative_v1
+        split_mode: train-only
+        emit_doc_index: true
+        doc_id_column: doc_id
+        title_column: title
+        max_docs: 2500000
+        max_temp_gb: 30
+
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests-v26-clean-teacher-256
+
+train:
+  max_steps: 3000
+
+  batch_size: 16
+  grad_accum_steps: 8
+
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 1000
+  save_interval: 1000
+  eval_batch_size: 4
+  eval_batches: null
+
+  seed: 2027
+  device: cuda
+  compile: true
+  precision: bf16
+
+  resume_from: null
+
+  warmup_steps: 1000
+  min_lr_ratio: 0.3
+
+  use_ema: true
+  ema_decay: 0.999
+  ema_eval: true
+  ema_device: cuda
+
+  use_teacher: true
+  teacher_model_name: openai-community/gpt2-large
+  teacher_weight: 0.20
+  teacher_temperature: 2.0
+  teacher_device: cuda
+
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  keep_step_checkpoints: true
+  log_cuda_memory: true
+
+  context_schedule:
+    name: fixed
+    end_context_len: 256

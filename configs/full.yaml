@@ -28,7 +28,7 @@ data:
   sources:
     - name: fineweb_edu
       path: data/fineweb-edu
-      glob: "**/edufineweb_train_*.bin"
+      glob: "**/*_train_*.bin"
       weight: 1.0
       notes: "Primary educational web corpus from HuggingFaceFW/fineweb-edu."
   val_data_path: val.bin

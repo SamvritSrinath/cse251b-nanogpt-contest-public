@@ -1,0 +1,99 @@
+name: probe_c_documents_math
+
+architecture:
+  name: modern_decoder
+  n_layer: 8
+  d_model: 384
+  n_heads: 6
+  ffn_multiplier: 2.67
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.0003
+  muon_lr: 0.02
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: pg19_books
+      path: data/pg19-books
+      glob: "**/*_train_*.bin"
+      weight: 0.45
+      sample_policy: document_window
+      prepare:
+        kind: hf_parquet
+        dataset: emozilla/pg19
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: pg19_books
+        filter_profile: pg19_books
+        split_mode: train-only
+        emit_doc_index: true
+    - name: s2orc_arxiv
+      path: data/s2orc-arxiv
+      glob: "**/*_train_*.bin"
+      weight: 0.35
+      sample_policy: section_window
+      prepare:
+        kind: hf_parquet
+        dataset: jedibear/s2orc_arxiv
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: s2orc_arxiv
+        filter_profile: s2orc_sections
+        split_mode: train-only
+        emit_doc_index: true
+        section_column: section
+    - name: openwebmath
+      path: data/openwebmath
+      glob: "**/*_train_*.bin"
+      weight: 0.20
+      sample_policy: packed_short_docs
+      prepare:
+        kind: hf_parquet
+        dataset: open-web-math/open-web-math
+        include: "**/*.parquet"
+        revision: main
+        text_column: text
+        shard_prefix: openwebmath
+        filter_profile: openwebmath
+        split_mode: train-only
+        emit_doc_index: true
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests
+
+train:
+  max_steps: 2000
+  batch_size: 8
+  grad_accum_steps: 2
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 400
+  save_interval: 400
+  eval_batch_size: 8
+  eval_batches: 64
+  seed: 1337
+  device: cuda
+  compile: false
+  precision: fp32
+  warmup_steps: 100
+  min_lr_ratio: 0.1
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  context_schedule:
+    name: fixed
+    end_context_len: 1024

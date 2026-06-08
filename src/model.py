@@ -12,6 +12,7 @@ References:
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -33,6 +34,7 @@ class ArchitectureRecipe:
     norm_type: str
     mlp_type: str
     bias: bool
+    qk_norm: bool
 
 
 class RMSNorm(nn.Module):
@@ -60,6 +62,7 @@ def build_modern_recipe(config: ArchitectureConfig) -> ArchitectureRecipe:
         norm_type="rmsnorm",
         mlp_type="swiglu",
         bias=False if config.bias is None else config.bias,
+        qk_norm=config.qk_norm,
     )
 
 
@@ -81,6 +84,7 @@ def build_gpt2_recipe(config: ArchitectureConfig) -> ArchitectureRecipe:
         norm_type="layernorm",
         mlp_type="gelu",
         bias=True if config.bias is None else config.bias,
+        qk_norm=False,
     )
 
 
@@ -226,9 +230,12 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = config.d_model // config.n_heads
         self.dropout = config.dropout
         self.use_rope = recipe.use_rope
+        self.qk_norm = recipe.qk_norm
         self.qkv_proj = nn.Linear(config.d_model, 3 * config.d_model, bias=recipe.bias)
         self.out_proj = nn.Linear(config.d_model, config.d_model, bias=recipe.bias)
         self.rotary = RotaryEmbedding(self.head_dim, base=config.rope_base) if recipe.use_rope else None
+        self.q_norm = RMSNorm(self.head_dim) if recipe.qk_norm else nn.Identity()
+        self.k_norm = RMSNorm(self.head_dim) if recipe.qk_norm else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply causal self-attention to a sequence."""
@@ -252,6 +259,10 @@ class CausalSelfAttention(nn.Module):
             cos, sin = self.rotary.get_cos_sin(seq_len, device=x.device, dtype=q.dtype)
             q = apply_rope(q, cos=cos, sin=sin)
             k = apply_rope(k, cos=cos, sin=sin)
+
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
 
         attn_out = F.scaled_dot_product_attention(
             q,
@@ -315,6 +326,10 @@ class DecoderLanguageModel(nn.Module):
         if config.weight_tying:
             self.lm_head.weight = self.token_embedding.weight
         self.apply(self._init_weights)
+        if config.residual_init == "scaled":
+            self._init_residual_projections()
+        elif config.residual_init != "default":
+            raise ValueError(f"Unsupported residual_init: {config.residual_init}")
 
     def _init_weights(self, module: nn.Module) -> None:
         """Initialize module weights with GPT-style defaults."""
@@ -325,6 +340,19 @@ class DecoderLanguageModel(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def _init_residual_projections(self) -> None:
+        """Apply GPT-style scaled init to residual branch projections."""
+
+        std = 0.02 / math.sqrt(2 * self.config.n_layer)
+        for block in self.blocks:
+            nn.init.normal_(block.attn.out_proj.weight, mean=0.0, std=std)
+            if block.attn.out_proj.bias is not None:
+                nn.init.zeros_(block.attn.out_proj.bias)
+            if hasattr(block.mlp, "down_proj"):
+                nn.init.normal_(block.mlp.down_proj.weight, mean=0.0, std=std)
+                if block.mlp.down_proj.bias is not None:
+                    nn.init.zeros_(block.mlp.down_proj.bias)
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Map token IDs to vocabulary logits."""

@@ -1,0 +1,117 @@
+name: full_v28_clean_short_ema_cooldown
+
+architecture:
+  name: projected_modern_decoder
+  n_layer: 12
+  embedding_dim: 256
+  d_model: 768
+  n_heads: 12
+  ffn_multiplier: 2.67
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+  qk_norm: true
+  residual_init: scaled
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.000045
+  muon_lr: 0.003
+  weight_decay: 0.08
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu_clean
+      path: data/fineweb-edu-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.62
+      sample_policy: packed_short_docs
+
+    - name: openwebtext_clean
+      path: data/openwebtext-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.14
+      sample_policy: packed_short_docs
+
+    - name: commonpile_wikimedia_clean
+      path: data/commonpile-wikimedia-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.10
+      sample_policy: document_window
+
+    - name: arxiv_abstracts_clean
+      path: data/commonpile-arxiv-abstracts-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.04
+      sample_policy: packed_short_docs
+
+    - name: pg19_books_clean
+      path: data/pg19-books-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.06
+      sample_policy: document_window
+
+    - name: commonpile_stackexchange_clean
+      path: data/commonpile-stackexchange-clean-v1
+      glob: "**/*_train_*.bin"
+      weight: 0.04
+      sample_policy: packed_short_docs
+
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests-v28-clean-cooldown
+
+train:
+  # Absolute step target: resumes from step 24000 and runs 2000 more steps.
+  max_steps: 26000
+
+  batch_size: 16
+  grad_accum_steps: 8
+
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 500
+  save_interval: 500
+  eval_batch_size: 8
+  eval_batches: null
+
+  seed: 2030
+  device: cuda
+  compile: true
+  precision: bf16
+
+  # Fill this with Stage 2B best or best_ema after evaluate.py comparison.
+  resume_from: submission/TODO_STAGE2B_RUN/best_ema
+  resume_initial_step: 24000
+  resume_initial_val_ppl: null
+  lr_schedule_origin: resume
+
+  warmup_steps: 200
+  min_lr_ratio: 0.3
+
+  use_ema: true
+  ema_decay: 0.9995
+  ema_eval: true
+  ema_device: cuda
+
+  use_teacher: false
+  teacher_weight: 0.0
+  teacher_temperature: 2.0
+  teacher_device: cuda
+
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  keep_step_checkpoints: true
+  log_cuda_memory: true
+
+  context_schedule:
+    name: fixed
+    end_context_len: 1024

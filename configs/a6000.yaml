@@ -1,0 +1,71 @@
+name: a6000_99m746_d576_l16_h9_ffn3111_295k
+
+architecture:
+  name: modern_decoder
+  n_layer: 16
+  d_model: 576
+  embedding_dim: null
+  n_heads: 9
+  ffn_multiplier: 3.111111
+  context_len: 1024
+  vocab_size: 50257
+  weight_tying: true
+  dropout: 0.0
+  bias: null
+  rope_base: 10000.0
+
+optimizer:
+  name: muon_hybrid
+  adamw_lr: 0.00035
+  muon_lr: 0.028
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  momentum: 0.95
+  nesterov: true
+  muon_ns_steps: 5
+
+data:
+  sources:
+    - name: fineweb_edu
+      path: data/fineweb-edu
+      glob: "**/*_train_*.bin"
+      weight: 0.85
+    - name: openwebtext
+      path: data/openwebtext
+      glob: "**/*_train_*.bin"
+      weight: 0.10
+    - name: wikimedia
+      path: data/wikimedia
+      glob: "**/*_train_*.bin"
+      weight: 0.04
+    - name: arxiv_abstracts
+      path: data/arxiv-abstracts
+      glob: "**/*_train_*.bin"
+      weight: 0.01
+  val_data_path: val.bin
+  data_fraction: 100%
+  manifest_dir: data/manifests
+
+train:
+  max_steps: 24000
+  batch_size: 32
+  grad_accum_steps: 9
+  grad_clip: 1.0
+  log_interval: 50
+  eval_interval: 500
+  save_interval: 500
+  eval_batch_size: 8
+  eval_batches: null
+  seed: 1341
+  device: cuda
+  compile: true
+  precision: bf16
+  warmup_steps: 400
+  min_lr_ratio: 0.08
+  checkpoint_dir: checkpoints
+  submission_dir: submission
+  log_cuda_memory: true
+  context_schedule:
+    name: fixed
+    end_context_len: 1024
